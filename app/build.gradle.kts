@@ -8,7 +8,7 @@ android {
         applicationId = "dev.module.statusbarbrightnessgesture"
         minSdk = 33
         targetSdk = 35
-        versionCode = 1
+        versionCode = 10
         versionName = "1.0.0"
     }
     buildTypes {
