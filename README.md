@@ -16,6 +16,10 @@ An LSPosed module that adds a horizontal swipe gesture on the status bar to cont
 - Android 14+
 - LSPosed
 
+## Download
+
+[![Get it on Obtainium](https://raw.githubusercontent.com/ImranR98/Obtainium/main/assets/graphics/badge_obtainium.png)](https://apps.obtainium.imranr.dev/redirect?r=obtainium://add/https://github.com/ethanm6/BrightnessGesture)
+
 ## Setup
 
 1. Install the APK
