@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Used as fallback launcher icon background if adaptive icon isn't supported -->
+    <color name="ic_launcher_background">#1A73E8</color>
+</resources>

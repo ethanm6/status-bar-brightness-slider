@@ -1,0 +1,24 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="192"
+    android:viewportHeight="192">
+
+    <!-- Octagonal gear ring (from ic_launcher_foreground) -->
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="12"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M143.776 42.266h-22.574a5.96 5.96 0 0 1-4.213-1.746l-16.776-16.775a5.96 5.96 0 0 0-8.426 0L75.01 40.52a5.96 5.96 0 0 1-4.213 1.746H48.224a5.96 5.96 0 0 0-5.958 5.958v22.574c0 1.58-.628 3.096-1.746 4.213L23.745 91.787a5.96 5.96 0 0 0 0 8.426l16.775 16.776a5.96 5.96 0 0 1 1.746 4.213v22.574a5.96 5.96 0 0 0 5.958 5.958h22.574c1.58 0 3.096.628 4.213 1.746l16.776 16.775a5.96 5.96 0 0 0 8.426 0l16.776-16.775a5.96 5.96 0 0 1 4.213-1.746h22.574a5.957 5.957 0 0 0 5.958-5.958v-22.574c0-1.58.628-3.096 1.746-4.213l16.775-16.776a5.96 5.96 0 0 0 0-8.426L151.48 75.01a5.96 5.96 0 0 1-1.746-4.213V48.224a5.96 5.96 0 0 0-5.958-5.958Z" />
+
+    <!-- "A" letter (from lawnicons auto_brightness_tile) -->
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="12"
+        android:strokeLineCap="round"
+        android:pathData="m93 68-18 54m24-54 18 54M99 68h-6m17 38H82" />
+
+</vector>

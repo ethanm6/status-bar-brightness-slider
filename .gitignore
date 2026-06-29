@@ -1,0 +1,19 @@
+# Build outputs
+build/
+app/build/
+*.apk
+*.aab
+
+# Android Studio
+.idea/
+*.iml
+.gradle/
+local.properties
+captures/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Claude
+CLAUDE.md
