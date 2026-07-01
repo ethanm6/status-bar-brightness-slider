@@ -73,7 +73,7 @@ public class SettingsActivity extends AppCompatActivity {
         hero.setPadding((int)(24*dp), (int)(24*dp), (int)(24*dp), (int)(8*dp));
 
         TextView title = new TextView(this);
-        title.setText("Brightness\nGesture");
+        title.setText("Brightness\nSlider");
         title.setTextSize(TypedValue.COMPLEX_UNIT_SP, 40);
         title.setTextColor(colOnSurface);
         title.setLineSpacing(0, 1.05f);

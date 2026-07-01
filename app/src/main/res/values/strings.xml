@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">Brightness Gesture</string>
+    <string name="app_name">Brightness Slider</string>
     <string name="app_description">Swipe horizontally on the status bar to adjust screen brightness</string>
     <string name="module_description">Adds a horizontal swipe gesture on the status bar to control screen brightness, mirroring crDroid\'s built-in implementation.</string>
 </resources>
