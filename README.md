@@ -30,4 +30,4 @@ No ADB commands or manual permission grants are needed.
 
 ## Based on
 
-[StatusBarBrightnessGesture](https://github.com/mbatthew/StatusBarBrightnessGesture) by mbatthew — licensed under MIT.
+[StatusBarBrightnessGesture](https://github.com/mbatthew/StatusBarBrightnessGesture) by mbatthew. GNU General Public License v3.0 (GPL-3.0).
