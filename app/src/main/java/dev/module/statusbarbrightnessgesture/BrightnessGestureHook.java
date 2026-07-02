@@ -27,7 +27,9 @@ import android.content.IntentFilter;
 import android.database.ContentObserver;
 import android.net.Uri;
 import android.provider.Settings;
+import android.graphics.Canvas;
 import android.graphics.Color;
+import android.graphics.Paint;
 import android.graphics.PixelFormat;
 import android.graphics.Typeface;
 import android.hardware.display.DisplayManager;
@@ -83,10 +85,13 @@ public class BrightnessGestureHook implements IXposedHookLoadPackage {
     private static final float GAMMA = 2.2f;
     // Exponent applied to finger position when mapping to the brightness float. 1.0 = linear.
     private static final float BRIGHTNESS_CURVE = 2.2f;
-    // WindowManager.LayoutParams.TYPE_STATUS_BAR_ADDITIONAL (hidden API) — privileged
-    // SystemUI window type exempt from the 0.8-alpha clamp applied to app overlays.
-    private static final int TYPE_STATUS_BAR_ADDITIONAL = 2041;
-    private static final long INDICATOR_DISMISS_DELAY_MS = 800;
+    // Privileged SystemUI window type for the indicator. TYPE_VOLUME_OVERLAY (2020)
+    // layers ABOVE the status bar (like the volume panel) so the indicator slides over
+    // it during the recoil/retract animations, and it's exempt from the 0.8-alpha clamp
+    // applied to ordinary app overlays. showIndicator() falls back to
+    // TYPE_APPLICATION_OVERLAY if the ROM rejects it.
+    private static final int TYPE_INDICATOR_WINDOW = 2020;
+    private static final long INDICATOR_DISMISS_DELAY_MS = 0;
 
     // ── Per-gesture state ─────────────────────────────────────────────────────
 
@@ -131,8 +136,9 @@ public class BrightnessGestureHook implements IXposedHookLoadPackage {
 
     // ── Indicator ─────────────────────────────────────────────────────────────
 
-    private android.view.View mIndicatorView;   // root window view (pill or teardrop)
-    private TextView mIndicatorTextView;        // inner text view for setText
+    private android.view.View mIndicatorView;   // root window view (pill or droplet)
+    private TextView mIndicatorTextView;        // inner text view for setText (pill only)
+    private DropletView mDropletView;         // custom view for the droplet shape
     private int mIndicatorShadowPad = 0;        // wrapper padding when shadow is enabled
     private WindowManager.LayoutParams mIndicatorParams;
     private int mIndicatorW;
@@ -162,6 +168,9 @@ public class BrightnessGestureHook implements IXposedHookLoadPackage {
     private volatile int mIndicatorYPosition    = Prefs.DEFAULT_INDICATOR_Y_POSITION;
     private volatile boolean mIndicatorShadow   = Prefs.DEFAULT_INDICATOR_SHADOW == 1;
     private volatile boolean mReverseSlider     = Prefs.DEFAULT_REVERSE_SLIDER == 1;
+    private volatile int mIndicatorShape        = Prefs.DEFAULT_INDICATOR_SHAPE;
+    private volatile int mMainLight             = Prefs.DEFAULT_MAIN_LIGHT;
+    private volatile int mMainDark              = Prefs.DEFAULT_MAIN_DARK;
 
     // ── Fullscreen touch overlay ──────────────────────────────────────────────
 
@@ -297,6 +306,8 @@ public class BrightnessGestureHook implements IXposedHookLoadPackage {
                 int prevColorMode = mIndicatorColorMode, prevCustom = mIndicatorCustomColor;
                 int prevTextMode = mTextColorMode, prevTextCustom = mTextCustomColor;
                 boolean prevShadow = mIndicatorShadow;
+                int prevShape = mIndicatorShape;
+                int prevMainLight = mMainLight, prevMainDark = mMainDark;
 
                 loadPrefsFromSecure(mContext);
                 applyAutoBrightness();
@@ -305,7 +316,10 @@ public class BrightnessGestureHook implements IXposedHookLoadPackage {
                         || prevCustom != mIndicatorCustomColor
                         || prevTextMode != mTextColorMode
                         || prevTextCustom != mTextCustomColor
-                        || prevShadow != mIndicatorShadow;
+                        || prevShadow != mIndicatorShadow
+                        || prevShape != mIndicatorShape
+                        || prevMainLight != mMainLight
+                        || prevMainDark != mMainDark;
 
                 updateFullscreenTouch();
                 if (needsReinit) reinitIndicator();
@@ -377,6 +391,10 @@ public class BrightnessGestureHook implements IXposedHookLoadPackage {
                     Prefs.KEY_INDICATOR_SHADOW, Prefs.DEFAULT_INDICATOR_SHADOW) == 1;
             mReverseSlider = Settings.Secure.getInt(cr,
                     Prefs.KEY_REVERSE_SLIDER, Prefs.DEFAULT_REVERSE_SLIDER) == 1;
+            mIndicatorShape = Settings.Secure.getInt(cr,
+                    Prefs.KEY_INDICATOR_SHAPE, Prefs.DEFAULT_INDICATOR_SHAPE);
+            mMainLight = Settings.Secure.getInt(cr, Prefs.KEY_MAIN_LIGHT, Prefs.DEFAULT_MAIN_LIGHT);
+            mMainDark = Settings.Secure.getInt(cr, Prefs.KEY_MAIN_DARK, Prefs.DEFAULT_MAIN_DARK);
             applyTuning();
         } catch (Throwable t) {
             mGestureEnabled = true;
@@ -595,21 +613,28 @@ public class BrightnessGestureHook implements IXposedHookLoadPackage {
             int textCol = resolveTextColor(accent);
             float d     = context.getResources().getDisplayMetrics().density;
 
-            initIndicatorPill(context, accent, textCol, d);
+            mIndicatorTextView = null;
+            mDropletView = null;
+            if (mIndicatorShape == Prefs.INDICATOR_SHAPE_DROPLET) {
+                initIndicatorDroplet(context, accent, textCol, d);
+            } else {
+                initIndicatorPill(context, accent, textCol, d);
+            }
 
-            // TYPE_STATUS_BAR_ADDITIONAL (a privileged SystemUI window type) instead of
-            // TYPE_APPLICATION_OVERLAY: since Android 12, a FLAG_NOT_TOUCHABLE application
-            // overlay ("system alert window") gets its alpha force-clamped to 0.8 by the
-            // untrusted-touch mitigation, which made the indicator translucent no matter
-            // what color/alpha we set. Privileged system types are exempt; we run inside
-            // SystemUI, which holds INTERNAL_SYSTEM_WINDOW. showIndicator() falls back to
-            // TYPE_APPLICATION_OVERLAY if the ROM rejects the type.
+            // See TYPE_INDICATOR_WINDOW: a privileged SystemUI type that layers above the
+            // status bar and is exempt from the untrusted-touch 0.8-alpha clamp that
+            // afflicts ordinary FLAG_NOT_TOUCHABLE app overlays. showIndicator() falls
+            // back to TYPE_APPLICATION_OVERLAY if the ROM rejects it.
             mIndicatorParams = new WindowManager.LayoutParams(
                     mIndicatorW, mIndicatorH,
-                    TYPE_STATUS_BAR_ADDITIONAL,
+                    TYPE_INDICATOR_WINDOW,
                     WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
                             | WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
                             | WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN
+                            // NO_LIMITS: don't clip the window to the content area, so it
+                            // can slide up over the status bar and off the top edge instead
+                            // of vanishing at the status-bar boundary.
+                            | WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS
                             | WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED,
                     PixelFormat.TRANSLUCENT);
             mIndicatorParams.gravity = Gravity.TOP | Gravity.START;
@@ -694,6 +719,56 @@ public class BrightnessGestureHook implements IXposedHookLoadPackage {
         }
     }
 
+    private void initIndicatorDroplet(Context context, int accent, int textCol, float d) {
+        final float textSizePx = 13f * context.getResources()
+                .getDisplayMetrics().scaledDensity;
+        Paint measure = new Paint(Paint.ANTI_ALIAS_FLAG);
+        float r = IndicatorDrawing.bulbRadius(d, textSizePx, measure);
+        // Shadow needs blur room around the drop; the window is sized to include it.
+        int pad = mIndicatorShadow ? (int)(16 * d) : 0;
+        mIndicatorShadowPad = pad;
+        mIndicatorW = IndicatorDrawing.dropletWidth(r) + 2 * pad;
+        mIndicatorH = IndicatorDrawing.dropletHeight(r) + 2 * pad;
+
+        DropletView view = new DropletView(context, accent, textCol, textSizePx,
+                mIndicatorShadow, d, pad);
+        if (mIndicatorShadow) {
+            view.setLayerType(android.view.View.LAYER_TYPE_SOFTWARE, null);
+        }
+        mDropletView = view;
+        mIndicatorView = view;
+    }
+
+    /** Custom view that canvas-draws the point-up droplet (shared with the preview). */
+    private static final class DropletView extends android.view.View {
+        private final Paint mFill = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final Paint mText = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final int mFillColor, mTextColor;
+        private final float mTextSizePx, mDensity, mPad;
+        private final boolean mShadow;
+        private String mValue = "100%";
+
+        DropletView(Context c, int fill, int text, float textSizePx,
+                     boolean shadow, float density, float pad) {
+            super(c);
+            mFillColor = fill; mTextColor = text; mTextSizePx = textSizePx;
+            mShadow = shadow; mDensity = density; mPad = pad;
+        }
+
+        void setValue(String v) { mValue = v; invalidate(); }
+
+        @Override protected void onDraw(Canvas canvas) {
+            IndicatorDrawing.drawDroplet(canvas, getWidth(), getHeight(), mPad,
+                    mFillColor, 255, mTextColor, mTextSizePx,
+                    mShadow, mDensity, mValue, mFill, mText);
+        }
+    }
+
+    private void setIndicatorValue(String s) {
+        if (mIndicatorTextView != null) mIndicatorTextView.setText(s);
+        else if (mDropletView != null) mDropletView.setValue(s);
+    }
+
     private void reinitIndicator() {
         if (mContext == null || mMainHandler == null) return;
         mMainHandler.post(() -> {
@@ -705,6 +780,7 @@ public class BrightnessGestureHook implements IXposedHookLoadPackage {
             }
             mIndicatorView = null;
             mIndicatorTextView = null;
+            mDropletView = null;
             mIndicatorParams   = null;
             if (mWindowManager != null) initIndicator(mContext);
         });
@@ -715,20 +791,16 @@ public class BrightnessGestureHook implements IXposedHookLoadPackage {
             case Prefs.TEXT_COLOR_MODE_WHITE:  return Color.WHITE;
             case Prefs.TEXT_COLOR_MODE_BLACK:  return Color.BLACK;
             case Prefs.TEXT_COLOR_MODE_CUSTOM: return mTextCustomColor;
-            case Prefs.TEXT_COLOR_MODE_ACCENT_LIGHT: {
-                int base = resolveAccentColour(mContext);
-                float[] hsv = new float[3]; android.graphics.Color.colorToHSV(base, hsv);
-                hsv[1] = Math.max(0f, hsv[1] - 0.55f); hsv[2] = Math.min(1f, hsv[2] + 0.30f);
-                return android.graphics.Color.HSVToColor(hsv) | 0xFF000000;
-            }
-            case Prefs.TEXT_COLOR_MODE_ACCENT:
-                return resolveAccentColour(mContext);
-            case Prefs.TEXT_COLOR_MODE_ACCENT_DARK: {
-                int base = resolveAccentColour(mContext);
-                float[] hsv = new float[3]; android.graphics.Color.colorToHSV(base, hsv);
-                hsv[2] = Math.max(0f, hsv[2] - 0.50f);
-                return android.graphics.Color.HSVToColor(hsv) | 0xFF000000;
-            }
+            case Prefs.TEXT_COLOR_MODE_ACCENT_LIGHT:   // "Primary"
+                try { return mContext.getColor(isNightMode(mContext)
+                        ? android.R.color.system_neutral1_800 : android.R.color.system_neutral1_100); }
+                catch (Throwable t) { return resolveAccentColour(mContext); }
+            case Prefs.TEXT_COLOR_MODE_ACCENT:   // "Main" — reported slider inactive tick colour
+                return (isNightMode(mContext) ? mMainDark : mMainLight) | 0xFF000000;
+            case Prefs.TEXT_COLOR_MODE_ACCENT_DARK:    // "Secondary"
+                try { return mContext.getColor(isNightMode(mContext)
+                        ? android.R.color.system_accent2_200 : android.R.color.system_accent2_600); }
+                catch (Throwable t) { return resolveAccentColour(mContext); }
             case Prefs.TEXT_COLOR_MODE_TERTIARY:
                 try { return mContext.getColor(android.R.color.system_accent3_600); } catch (Throwable t) { break; }
             case Prefs.TEXT_COLOR_MODE_NEUTRAL:
@@ -756,20 +828,26 @@ public class BrightnessGestureHook implements IXposedHookLoadPackage {
                 || mode == Prefs.COLOR_MODE_NEUTRAL_VAR;
     }
 
+    private int resolveAccentColour(Context context) {
+        try { return context.getColor(android.R.color.system_accent1_600); }
+        catch (Throwable t) { return 0xFF1E1E1E; }
+    }
+
+    private boolean isNightMode(Context context) {
+        return (context.getResources().getConfiguration().uiMode
+                & android.content.res.Configuration.UI_MODE_NIGHT_MASK)
+                == android.content.res.Configuration.UI_MODE_NIGHT_YES;
+    }
+
     private int getIndicatorColor(Context context) {
-        if (mIndicatorColorMode == Prefs.COLOR_MODE_ACCENT_LIGHT) {
-            int base = resolveAccentColour(context);
-            float[] hsv = new float[3];
-            android.graphics.Color.colorToHSV(base, hsv);
-            hsv[1] = Math.max(0f, hsv[1] - 0.55f);
-            hsv[2] = Math.min(1f, hsv[2] + 0.30f);
-            return android.graphics.Color.HSVToColor(hsv) | 0xFF000000;
-        } else if (mIndicatorColorMode == Prefs.COLOR_MODE_ACCENT_DARK) {
-            int base = resolveAccentColour(context);
-            float[] hsv = new float[3];
-            android.graphics.Color.colorToHSV(base, hsv);
-            hsv[2] = Math.max(0f, hsv[2] - 0.50f);
-            return android.graphics.Color.HSVToColor(hsv) | 0xFF000000;
+        if (mIndicatorColorMode == Prefs.COLOR_MODE_ACCENT_LIGHT) {   // "Primary"
+            try { return context.getColor(isNightMode(context)
+                    ? android.R.color.system_neutral1_800 : android.R.color.system_neutral1_100); }
+            catch (Throwable ignored) { return resolveAccentColour(context); }
+        } else if (mIndicatorColorMode == Prefs.COLOR_MODE_ACCENT_DARK) {  // "Secondary" — app secondary role
+            try { return context.getColor(isNightMode(context)
+                    ? android.R.color.system_accent2_200 : android.R.color.system_accent2_600); }
+            catch (Throwable ignored) { return resolveAccentColour(context); }
         } else if (mIndicatorColorMode == Prefs.COLOR_MODE_SECONDARY) {
             try { return context.getColor(android.R.color.system_accent2_600); } catch (Throwable ignored) {}
         } else if (mIndicatorColorMode == Prefs.COLOR_MODE_TERTIARY) {
@@ -785,13 +863,10 @@ public class BrightnessGestureHook implements IXposedHookLoadPackage {
         } else if (mIndicatorColorMode == Prefs.COLOR_MODE_CUSTOM) {
             return mIndicatorCustomColor;
         }
-        return resolveAccentColour(context);
+        // "Main" (and default) — the reported slider inactive tick colour, per theme.
+        return (isNightMode(context) ? mMainDark : mMainLight) | 0xFF000000;
     }
 
-    private int resolveAccentColour(Context context) {
-        try { return context.getColor(android.R.color.system_accent1_600); }
-        catch (Throwable t) { return 0xFF1E1E1E; }
-    }
 
     // ── Inner drawables / views ───────────────────────────────────────────────
 
@@ -804,7 +879,7 @@ public class BrightnessGestureHook implements IXposedHookLoadPackage {
     }
 
     private void showIndicator(float fingerX, float linearBrightness) {
-        if (mIndicatorView == null || mIndicatorTextView == null
+        if (mIndicatorView == null
                 || mWindowManager == null || mMainHandler == null
                 || mIndicatorParams == null) return;
         if (!mOverlayEnabled) return;
@@ -837,7 +912,7 @@ public class BrightnessGestureHook implements IXposedHookLoadPackage {
         mIndicatorParams.x = xOffset;
 
         try {
-            mIndicatorTextView.setText(pct + "%");
+            setIndicatorValue(pct + "%");
             float targetAlpha = mIndicatorAlpha / 100f;
             if (!mIndicatorAttached) {
                 if (mHideAnimator != null) { mHideAnimator.cancel(); mHideAnimator = null; }
@@ -872,6 +947,18 @@ public class BrightnessGestureHook implements IXposedHookLoadPackage {
         }
     }
 
+    /** Damped-spring interpolator: overshoots then oscillates to a settle (springy bounce). */
+    private static final class SpringInterpolator implements android.animation.TimeInterpolator {
+        private final double freq, decay;
+        SpringInterpolator(double oscillations, double decay) {
+            this.freq = 2 * Math.PI * oscillations;
+            this.decay = decay;
+        }
+        @Override public float getInterpolation(float t) {
+            return (float) (1 - Math.exp(-decay * t) * Math.cos(freq * t));
+        }
+    }
+
     private void startSlideIn(int targetY, float targetAlpha) {
         if (mSlideInAnimator != null) mSlideInAnimator.cancel();
         mSlideInAnimating = true;
@@ -881,8 +968,9 @@ public class BrightnessGestureHook implements IXposedHookLoadPackage {
         catch (Throwable ignored) {}
 
         ValueAnimator anim = ValueAnimator.ofInt(-mIndicatorH, targetY);
-        anim.setDuration(220);
-        anim.setInterpolator(new android.view.animation.DecelerateInterpolator());
+        anim.setDuration(280);
+        // Overshoot → drops in past its resting spot and recoils back (a touch pronounced).
+        anim.setInterpolator(new android.view.animation.OvershootInterpolator(1.6f));
         anim.addUpdateListener(va -> {
             mIndicatorParams.y = (int) va.getAnimatedValue();
             try { mWindowManager.updateViewLayout(mIndicatorView, mIndicatorParams); }
@@ -984,12 +1072,17 @@ public class BrightnessGestureHook implements IXposedHookLoadPackage {
         if (mHideAnimator != null) { mHideAnimator.cancel(); mHideAnimator = null; }
         if (!mIndicatorAttached) return;
 
-        float startAlpha = mIndicatorParams != null ? mIndicatorParams.alpha : 0f;
-        ValueAnimator anim = ValueAnimator.ofFloat(startAlpha, 0f);
-        anim.setDuration(200);
+        final int startY = mIndicatorParams != null ? mIndicatorParams.y : 0;
+        // Travel fully above the screen top so it clearly slides up past the status bar
+        // before it's removed (extra clearance beyond just -mIndicatorH).
+        final int endY = -mIndicatorH - Math.round(48 * mDensity);
+        // Swift pull-away: accelerate upward out of view. No fade — it just slides out.
+        ValueAnimator anim = ValueAnimator.ofInt(startY, endY);
+        anim.setDuration(170);
+        anim.setInterpolator(new android.view.animation.AccelerateInterpolator(1.5f));
         anim.addUpdateListener(va -> {
             if (mIndicatorParams != null) {
-                mIndicatorParams.alpha = (float) va.getAnimatedValue();
+                mIndicatorParams.y = (int) va.getAnimatedValue();
                 try { mWindowManager.updateViewLayout(mIndicatorView, mIndicatorParams); }
                 catch (Throwable ignored) {}
             }

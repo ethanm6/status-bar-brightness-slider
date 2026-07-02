@@ -59,6 +59,8 @@ public class IndicatorAppearanceActivity extends AppCompatActivity {
     private int colOnSurface;
     private int colOnSurfaceVariant;
     private int colPrimary;
+    private int colSecondary;
+    private int mMainColor;
     private float dp;
 
     private int mColorMode;
@@ -67,6 +69,7 @@ public class IndicatorAppearanceActivity extends AppCompatActivity {
     private int mTextColorMode;
     private int mTextCustomColor;
     private boolean mShadow;
+    private int mShape;
 
     private IndicatorPreviewView mPreviewView;
     private MaterialCardView mPreviewCard;
@@ -89,6 +92,13 @@ public class IndicatorAppearanceActivity extends AppCompatActivity {
         WindowCompat.setDecorFitsSystemWindows(getWindow(), false);
         resolveColours();
         dp = getResources().getDisplayMetrics().density;
+        // "Main" = the app slider's inactive tick colour (the right-side dots). Read it
+        // exactly and report it so the indicator matches (the hook resolves M3 differently).
+        // "Main" = the app slider's inactive track colour = colorSecondaryContainer.
+        mMainColor = resolveAttr(com.google.android.material.R.attr.colorSecondaryContainer, 0xFF920026);
+        boolean nightNow = (getResources().getConfiguration().uiMode
+                & Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES;
+        Prefs.setPref(this, nightNow ? Prefs.KEY_MAIN_DARK : Prefs.KEY_MAIN_LIGHT, mMainColor);
 
         mColorMode   = Settings.Secure.getInt(getContentResolver(),
                 Prefs.KEY_INDICATOR_COLOR_MODE,   Prefs.DEFAULT_INDICATOR_COLOR_MODE);
@@ -102,6 +112,8 @@ public class IndicatorAppearanceActivity extends AppCompatActivity {
                 Prefs.KEY_INDICATOR_TEXT_CUSTOM_COLOR, Prefs.DEFAULT_INDICATOR_TEXT_CUSTOM_COLOR);
         mShadow          = Settings.Secure.getInt(getContentResolver(),
                 Prefs.KEY_INDICATOR_SHADOW,            Prefs.DEFAULT_INDICATOR_SHADOW) == 1;
+        mShape           = Settings.Secure.getInt(getContentResolver(),
+                Prefs.KEY_INDICATOR_SHAPE,             Prefs.DEFAULT_INDICATOR_SHAPE);
 
         // ── Root ──────────────────────────────────────────────────────────────
         LinearLayout root = new LinearLayout(this);
@@ -208,7 +220,9 @@ public class IndicatorAppearanceActivity extends AppCompatActivity {
             }
         });
 
-        addSectionLabel(content, "Color", 0);
+        addSectionLabel(content, "Shape", 0);
+        buildShapeSection(content);
+        addSectionLabel(content, "Color");
         buildColorSection(content);
         buildTextColorSection(content);
         addSectionLabel(content, "Opacity");
@@ -291,7 +305,7 @@ public class IndicatorAppearanceActivity extends AppCompatActivity {
         int[] myModes  = {Prefs.COLOR_MODE_ACCENT_LIGHT, Prefs.COLOR_MODE_ACCENT,
                           Prefs.COLOR_MODE_ACCENT_DARK, Prefs.COLOR_MODE_TERTIARY,
                           Prefs.COLOR_MODE_NEUTRAL};
-        String[] myLabels = {"Light", "Main", "Dark", "Tonal", "Neutral"};
+        String[] myLabels = {"Primary", "Main", "Secondary", "Tonal", "Neutral"};
         mMaterialYouSwatches = new ColorSwatch[5];
         LinearLayout myRow = new LinearLayout(this);
         myRow.setOrientation(LinearLayout.HORIZONTAL);
@@ -449,6 +463,75 @@ public class IndicatorAppearanceActivity extends AppCompatActivity {
         parent.addView(card, cardLp);
     }
 
+    // ── Shape section ─────────────────────────────────────────────────────────
+
+    private TextView[] mShapeChecks;
+
+    private void buildShapeSection(LinearLayout parent) {
+        MaterialCardView card = new MaterialCardView(this);
+        card.setRadius(28 * dp);
+        card.setCardElevation(0);
+        card.setCardBackgroundColor(colSurfaceContainer);
+        card.setStrokeWidth(0);
+        LinearLayout.LayoutParams cardLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        cardLp.bottomMargin = (int)(8 * dp);
+
+        LinearLayout inner = new LinearLayout(this);
+        inner.setOrientation(LinearLayout.VERTICAL);
+        inner.setPadding(0, (int)(4*dp), 0, (int)(4*dp));
+
+        String[] names = {"Pill", "Droplet"};
+        int[] shapes = {Prefs.INDICATOR_SHAPE_PILL, Prefs.INDICATOR_SHAPE_DROPLET};
+        mShapeChecks = new TextView[2];
+        for (int i = 0; i < 2; i++) {
+            final int shape = shapes[i];
+            LinearLayout row = new LinearLayout(this);
+            row.setOrientation(LinearLayout.HORIZONTAL);
+            row.setGravity(Gravity.CENTER_VERTICAL);
+            row.setPadding((int)(20*dp), (int)(14*dp), (int)(20*dp), (int)(14*dp));
+            row.setClickable(true);
+            TypedValue ripple = new TypedValue();
+            getTheme().resolveAttribute(android.R.attr.selectableItemBackground, ripple, true);
+            row.setBackgroundResource(ripple.resourceId);
+
+            TextView label = new TextView(this);
+            label.setText(names[i]);
+            label.setTextSize(TypedValue.COMPLEX_UNIT_SP, 16);
+            label.setTextColor(colOnSurface);
+            label.setTypeface(android.graphics.Typeface.create("sans-serif-medium",
+                    android.graphics.Typeface.NORMAL));
+            row.addView(label, new LinearLayout.LayoutParams(
+                    0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+
+            TextView check = new TextView(this);
+            check.setText("✓");
+            check.setTextSize(TypedValue.COMPLEX_UNIT_SP, 18);
+            check.setTextColor(colPrimary);
+            check.setVisibility(mShape == shape ? View.VISIBLE : View.INVISIBLE);
+            mShapeChecks[i] = check;
+            row.addView(check);
+
+            row.setOnClickListener(v -> selectShape(shape));
+            inner.addView(row, new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        }
+
+        card.addView(inner, new ViewGroup.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        parent.addView(card, cardLp);
+    }
+
+    private void selectShape(int shape) {
+        mShape = shape;
+        Prefs.setPref(this, Prefs.KEY_INDICATOR_SHAPE, shape);
+        int[] shapes = {Prefs.INDICATOR_SHAPE_PILL, Prefs.INDICATOR_SHAPE_DROPLET};
+        for (int i = 0; i < mShapeChecks.length; i++) {
+            mShapeChecks[i].setVisibility(mShape == shapes[i] ? View.VISIBLE : View.INVISIBLE);
+        }
+        invalidatePreviews();
+    }
+
     // ── Shadow section ────────────────────────────────────────────────────────
 
     private void buildShadowSection(LinearLayout parent) {
@@ -594,7 +677,7 @@ public class IndicatorAppearanceActivity extends AppCompatActivity {
         int[] myBgModes    = {Prefs.COLOR_MODE_ACCENT_LIGHT, Prefs.COLOR_MODE_ACCENT,
                               Prefs.COLOR_MODE_ACCENT_DARK,  Prefs.COLOR_MODE_TERTIARY,
                               Prefs.COLOR_MODE_NEUTRAL};
-        String[] myLabels  = {"Light", "Main", "Dark", "Tonal", "Neutral"};
+        String[] myLabels  = {"Primary", "Main", "Secondary", "Tonal", "Neutral"};
         mTextMySwatches = new ColorSwatch[5];
         for (int i = 0; i < 5; i++) {
             mTextMySwatches[i] = new ColorSwatch(resolveColorForMode(myBgModes[i]), myLabels[i]);
@@ -786,7 +869,7 @@ public class IndicatorAppearanceActivity extends AppCompatActivity {
         }
         if (mTextColorSubtitle != null) {
             String[] allNames = {"Auto", "White", "Black", "Custom",
-                                 "Light", "Main", "Dark", "Tonal", "Neutral"};
+                                 "Primary", "Main", "Secondary", "Tonal", "Neutral"};
             int idx = (mTextColorMode >= 0 && mTextColorMode < allNames.length) ? mTextColorMode : 0;
             mTextColorSubtitle.setText(allNames[idx]);
         }
@@ -794,23 +877,17 @@ public class IndicatorAppearanceActivity extends AppCompatActivity {
 
     // ── Helpers ───────────────────────────────────────────────────────────────
 
-    private int resolveAccentBase() {
-        try { return getColor(android.R.color.system_accent1_600); } catch (Throwable ignored) {}
-        return colPrimary;
-    }
 
     private int resolveColorForMode(int mode) {
-        if (mode == Prefs.COLOR_MODE_ACCENT_LIGHT) {
-            float[] hsv = new float[3];
-            Color.colorToHSV(resolveAccentBase(), hsv);
-            hsv[1] = Math.max(0f, hsv[1] - 0.55f);
-            hsv[2] = Math.min(1f, hsv[2] + 0.30f);
-            return Color.HSVToColor(hsv) | 0xFF000000;
-        } else if (mode == Prefs.COLOR_MODE_ACCENT_DARK) {
-            float[] hsv = new float[3];
-            Color.colorToHSV(resolveAccentBase(), hsv);
-            hsv[2] = Math.max(0f, hsv[2] - 0.50f);
-            return Color.HSVToColor(hsv) | 0xFF000000;
+        if (mode == Prefs.COLOR_MODE_ACCENT) {               // "Main" — slider inactive tick colour
+            return mMainColor | 0xFF000000;
+        } else if (mode == Prefs.COLOR_MODE_ACCENT_LIGHT) {  // "Primary" — matches the indicator exactly
+            boolean night = (getResources().getConfiguration().uiMode
+                    & Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES;
+            return getColor(night ? android.R.color.system_neutral1_800
+                    : android.R.color.system_neutral1_100) | 0xFF000000;
+        } else if (mode == Prefs.COLOR_MODE_ACCENT_DARK) {  // "Secondary" — app secondary role
+            return colSecondary | 0xFF000000;
         } else if (mode == Prefs.COLOR_MODE_SECONDARY) {
             try { return getColor(android.R.color.system_accent2_600); } catch (Throwable ignored) {}
         } else if (mode == Prefs.COLOR_MODE_TERTIARY) {
@@ -878,6 +955,22 @@ public class IndicatorAppearanceActivity extends AppCompatActivity {
             int bgColor = resolveColorForMode(mColorMode);
             int textCol = resolveTextColorForMode(bgColor);
             float w = getWidth(), h = getHeight(), cx = w / 2f;
+            int alpha255 = Math.round(mAlpha / 100f * 255);
+
+            if (mShape == Prefs.INDICATOR_SHAPE_DROPLET) {
+                // Shared drawer → identical to the on-screen indicator, scaled up by text size.
+                float textSizePx = 17 * dp;
+                float r  = IndicatorDrawing.bulbRadius(dp, textSizePx, mTextPaint);
+                float tw = IndicatorDrawing.dropletWidth(r);
+                float th = IndicatorDrawing.dropletHeight(r);
+                canvas.save();
+                canvas.translate(cx - tw / 2f, h / 2f - th / 2f);
+                IndicatorDrawing.drawDroplet(canvas, tw, th, 0,
+                        bgColor, alpha255, textCol, textSizePx,
+                        mShadow, dp, "75%", mFillPaint, mTextPaint);
+                canvas.restore();
+                return;
+            }
 
             // Mirror the real pill's construction exactly, scaled up by text size.
             // Real pill: 13sp bold text, 14dp horizontal / 6dp vertical padding,
@@ -1036,6 +1129,8 @@ public class IndicatorAppearanceActivity extends AppCompatActivity {
                                         night ? 0xFFCAC4D0 : 0xFF49454F));
         colPrimary          = resolveAttr(android.R.attr.colorPrimary,
                                 night ? 0xFFD0BCFF : 0xFF6650A4);
+        colSecondary        = resolveAttr(com.google.android.material.R.attr.colorSecondary,
+                                night ? 0xFFCCC2DC : 0xFF625B71);
     }
 
     private int resolveAttr(int attr, int fallback) {

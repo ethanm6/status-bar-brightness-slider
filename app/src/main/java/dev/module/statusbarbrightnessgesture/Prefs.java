@@ -44,6 +44,10 @@ public final class Prefs {
     public static final String KEY_INDICATOR_TEXT_CUSTOM_COLOR = "sbbrightness_indicator_text_custom_color";
     public static final String KEY_INDICATOR_SHADOW            = "sbbrightness_indicator_shadow";
     public static final String KEY_REVERSE_SLIDER               = "sbbrightness_reverse_slider";
+    // The app reports the exact "Main" colour (its slider's inactive tick colour) per
+    // light/dark, since the hook resolves M3 attrs differently from the app's theme.
+    public static final String KEY_MAIN_LIGHT                  = "sbbrightness_main_light";
+    public static final String KEY_MAIN_DARK                  = "sbbrightness_main_dark";
 
     public static final String ACTION_PREFS_CHANGED =
             "dev.module.statusbarbrightnessgesture.PREFS_CHANGED";
@@ -75,6 +79,8 @@ public final class Prefs {
     public static final int DEFAULT_INDICATOR_TEXT_CUSTOM_COLOR = 0xFFFFFFFF;
     public static final int DEFAULT_INDICATOR_SHADOW            = 0;
     public static final int DEFAULT_REVERSE_SLIDER               = 0;
+    public static final int DEFAULT_MAIN_LIGHT                 = 0xFF984061;
+    public static final int DEFAULT_MAIN_DARK                  = 0xFF920026;
 
     public static final int SENSITIVITY_MIN    = 1;
     public static final int SENSITIVITY_MAX    = 10;
@@ -82,7 +88,7 @@ public final class Prefs {
 
     // Shape constants
     public static final int INDICATOR_SHAPE_PILL     = 0;
-    public static final int INDICATOR_SHAPE_TEARDROP = 1;
+    public static final int INDICATOR_SHAPE_DROPLET = 1;
 
     // Text color mode constants
     public static final int TEXT_COLOR_MODE_AUTO         = 0;
