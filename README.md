@@ -1,4 +1,4 @@
-# Brightness Gesture
+# Brightness Slider
 
 An LSPosed module that adds a horizontal swipe gesture on the status bar to control screen brightness. Built with a modern Material You interface that adapts to your wallpaper colors.
 
@@ -28,6 +28,11 @@ An LSPosed module that adds a horizontal swipe gesture on the status bar to cont
 
 No ADB commands or manual permission grants are needed.
 
-## Based on
+## License
 
-[StatusBarBrightnessGesture](https://github.com/mbatthew/StatusBarBrightnessGesture) by mbatthew — licensed under MIT.
+Licensed under the **GNU General Public License v3.0 or later** (GPL-3.0-or-later) — see [LICENSE](LICENSE).
+
+## Credits
+
+- Based on [StatusBarBrightnessGesture](https://github.com/mbatthew/StatusBarBrightnessGesture) by mbatthew, originally licensed under the MIT License — see [LICENSE-MIT](LICENSE-MIT).
+- Launcher icon adapted from [Lawnicons](https://github.com/LawnchairLauncher/lawnicons) by the Lawnchair team, licensed under Apache-2.0.

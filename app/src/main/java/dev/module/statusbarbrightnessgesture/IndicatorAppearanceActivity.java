@@ -1,3 +1,22 @@
+/*
+ * Brightness Slider — status bar brightness gesture (LSPosed module).
+ * Copyright (C) 2026 ethanm6
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ *
+ * Based on StatusBarBrightnessGesture by mbatthew (MIT); see LICENSE-MIT.
+ */
 package dev.module.statusbarbrightnessgesture;
 
 import android.content.res.Configuration;
@@ -127,7 +146,9 @@ public class IndicatorAppearanceActivity extends AppCompatActivity {
 
         mScrollView = new NestedScrollView(this);
         NestedScrollView scroll = mScrollView;
-        // overscroll re-enabled — preview is outside the scroll so it won't be affected
+        // Overscroll stretch stays ON for the card content. The title and preview are
+        // floated out of the scroll (into the frame overlay) so the stretch never touches
+        // them — the card list still stretches, the header stays rigid.
         frame.addView(scroll, new android.widget.FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
 
@@ -137,28 +158,50 @@ public class IndicatorAppearanceActivity extends AppCompatActivity {
         scroll.addView(content, new ViewGroup.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
 
+        // Android-16-style large collapsing settings title: 32sp, medium weight (500).
+        // It floats in the overlay (like the preview) so the top-edge overscroll stretch
+        // never stretches it; a placeholder reserves its space in the scroll.
         TextView pageTitle = new TextView(this);
         pageTitle.setText("Indicator appearance");
-        pageTitle.setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, 28);
+        pageTitle.setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, 32);
+        pageTitle.setTypeface(android.graphics.Typeface.create(
+                "sans-serif-medium", android.graphics.Typeface.NORMAL));
         pageTitle.setTextColor(colOnSurface);
-        pageTitle.setPadding((int)(4*dp), (int)(8*dp), 0, (int)(20*dp));
-        content.addView(pageTitle, new LinearLayout.LayoutParams(
+        pageTitle.setBackgroundColor(colBackground);
+        // 16dp content inset + 4dp original inset = 20dp left; 16dp right.
+        pageTitle.setPadding((int)(20*dp), (int)(8*dp), (int)(16*dp), (int)(20*dp));
+        frame.addView(pageTitle, new android.widget.FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+
+        // Measure the title now so the placeholder gets its real height on the FIRST layout
+        // pass — otherwise the preview (positioned from the placeholder) starts on top of
+        // the title and covers it.
+        int widthPx = getResources().getDisplayMetrics().widthPixels;
+        pageTitle.measure(
+                View.MeasureSpec.makeMeasureSpec(widthPx, View.MeasureSpec.EXACTLY),
+                View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED));
+        final View titlePlaceholder = new View(this);
+        content.addView(titlePlaceholder, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, pageTitle.getMeasuredHeight()));
 
         buildPreview(content, frame);
 
         scroll.setOnScrollChangeListener(
             (NestedScrollView.OnScrollChangeListener) (v, scrollX, scrollY, oldX, oldY) -> {
-                int bottom = pageTitle.getBottom();
+                int bottom = titlePlaceholder.getBottom();
                 if (bottom > 0) {
                     toolbar.setTitle(scrollY >= bottom ? "Indicator appearance" : "");
+                    styleToolbarTitle(toolbar);
                 }
+                // Title scrolls up freely (unclamped) and slides under the toolbar.
+                pageTitle.setTranslationY(titlePlaceholder.getTop() - scrollY);
                 if (mPreviewWrapper != null && mPreviewPlaceholder != null) {
                     float y = Math.max(0f, mPreviewPlaceholder.getTop() - scrollY);
                     mPreviewWrapper.setTranslationY(y);
                 }
             });
         scroll.post(() -> {
+            pageTitle.setTranslationY(titlePlaceholder.getTop() - scroll.getScrollY());
             if (mPreviewWrapper != null && mPreviewPlaceholder != null) {
                 mPreviewWrapper.setTranslationY(
                         Math.max(0f, mPreviewPlaceholder.getTop() - scroll.getScrollY()));
@@ -211,6 +254,17 @@ public class IndicatorAppearanceActivity extends AppCompatActivity {
 
     private void invalidatePreviews() {
         mPreviewView.invalidate();
+    }
+
+    /** Match the collapsed toolbar title's weight to the large title (medium 500). */
+    private void styleToolbarTitle(MaterialToolbar tb) {
+        for (int i = 0; i < tb.getChildCount(); i++) {
+            View c = tb.getChildAt(i);
+            if (c instanceof TextView) {
+                ((TextView) c).setTypeface(android.graphics.Typeface.create(
+                        "sans-serif-medium", android.graphics.Typeface.NORMAL));
+            }
+        }
     }
 
     // ── Color section ─────────────────────────────────────────────────────────
