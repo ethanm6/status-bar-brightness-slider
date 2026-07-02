@@ -2,6 +2,8 @@
 
 An LSPosed module that adds a horizontal swipe gesture on the status bar to control screen brightness. Built with a modern Material You interface that adapts to your wallpaper colors.
 
+GNU General Public License v3.0 (GPL-3.0)
+
 ## Features
 
 - Swipe left/right on the status bar to adjust brightness
