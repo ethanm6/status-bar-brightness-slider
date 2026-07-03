@@ -147,6 +147,13 @@ public class IndicatorAppearanceActivity extends AppCompatActivity {
         navIcon.setLayerInset(1, navIconPad, navIconPad, navIconPad, navIconPad);
         toolbar.setNavigationIcon(navIcon);
         toolbar.setNavigationOnClickListener(v -> getOnBackPressedDispatcher().onBackPressed());
+        // Set the collapsed title once and drive its visibility purely through alpha.
+        // The page OPENS collapsed (small toolbar title, like the A16 settings pages);
+        // the large title only appears when the user scrolls up to reveal it, crossfading
+        // with this one via the scroll listener below.
+        toolbar.setTitle("Indicator appearance");
+        final TextView collapsedTitle = styleToolbarTitle(toolbar);
+        if (collapsedTitle != null) collapsedTitle.setAlpha(1f);
         root.addView(toolbar, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
 
@@ -182,6 +189,7 @@ public class IndicatorAppearanceActivity extends AppCompatActivity {
         pageTitle.setBackgroundColor(colBackground);
         // 16dp content inset + 4dp original inset = 20dp left; 16dp right.
         pageTitle.setPadding((int)(20*dp), (int)(8*dp), (int)(16*dp), (int)(20*dp));
+        pageTitle.setAlpha(0f);  // page opens collapsed; revealed by scrolling up
         frame.addView(pageTitle, new android.widget.FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
 
@@ -202,8 +210,14 @@ public class IndicatorAppearanceActivity extends AppCompatActivity {
             (NestedScrollView.OnScrollChangeListener) (v, scrollX, scrollY, oldX, oldY) -> {
                 int bottom = titlePlaceholder.getBottom();
                 if (bottom > 0) {
-                    toolbar.setTitle(scrollY >= bottom ? "Indicator appearance" : "");
-                    styleToolbarTitle(toolbar);
+                    // A16-style crossfade (CollapsingToolbarLayout fade mode): the
+                    // large title fades out over the first half of the collapse as
+                    // it slides under the toolbar, the collapsed title fades in
+                    // over the second half — and the reverse scrolling back down.
+                    float p = Math.max(0f, Math.min(1f, scrollY / (float) bottom));
+                    pageTitle.setAlpha(1f - Math.min(1f, p / 0.5f));
+                    if (collapsedTitle != null)
+                        collapsedTitle.setAlpha(Math.max(0f, (p - 0.5f) / 0.5f));
                 }
                 // Title scrolls up freely (unclamped) and slides under the toolbar.
                 pageTitle.setTranslationY(titlePlaceholder.getTop() - scrollY);
@@ -213,11 +227,24 @@ public class IndicatorAppearanceActivity extends AppCompatActivity {
                 }
             });
         scroll.post(() -> {
+            // Open collapsed: start scrolled just past the large title so the page
+            // begins with the small toolbar title; the large one only appears if the
+            // user scrolls up. (A restored scroll position is left alone.)
+            if (scroll.getScrollY() == 0) scroll.scrollTo(0, titlePlaceholder.getBottom());
             pageTitle.setTranslationY(titlePlaceholder.getTop() - scroll.getScrollY());
             if (mPreviewWrapper != null && mPreviewPlaceholder != null) {
                 mPreviewWrapper.setTranslationY(
                         Math.max(0f, mPreviewPlaceholder.getTop() - scroll.getScrollY()));
             }
+            // Apply the scroll-derived alphas for the initial position (the scrollTo
+            // above fires the listener, but a restored position may not).
+            int bottom = titlePlaceholder.getBottom();
+            float p = bottom > 0
+                    ? Math.max(0f, Math.min(1f, scroll.getScrollY() / (float) bottom))
+                    : 0f;
+            pageTitle.setAlpha(1f - Math.min(1f, p / 0.5f));
+            if (collapsedTitle != null)
+                collapsedTitle.setAlpha(Math.max(0f, (p - 0.5f) / 0.5f));
         });
 
         addSectionLabel(content, "Shape", 0);
@@ -270,15 +297,20 @@ public class IndicatorAppearanceActivity extends AppCompatActivity {
         mPreviewView.invalidate();
     }
 
-    /** Match the collapsed toolbar title's weight to the large title (medium 500). */
-    private void styleToolbarTitle(MaterialToolbar tb) {
+    /**
+     * Match the collapsed toolbar title's weight to the large title (medium 500)
+     * and return its TextView so scrolling can drive its fade.
+     */
+    private TextView styleToolbarTitle(MaterialToolbar tb) {
         for (int i = 0; i < tb.getChildCount(); i++) {
             View c = tb.getChildAt(i);
             if (c instanceof TextView) {
                 ((TextView) c).setTypeface(android.graphics.Typeface.create(
                         "sans-serif-medium", android.graphics.Typeface.NORMAL));
+                return (TextView) c;
             }
         }
+        return null;
     }
 
     // ── Color section ─────────────────────────────────────────────────────────

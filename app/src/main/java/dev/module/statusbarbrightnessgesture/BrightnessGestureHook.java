@@ -79,6 +79,8 @@ public class BrightnessGestureHook implements IXposedHookLoadPackage {
             "com.android.systemui.shade.NotificationShadeWindowView";
     private static final String BRIGHTNESS_UTILS_CLASS =
             "com.android.settingslib.display.BrightnessUtils";
+    private static final String EDGE_BACK_HANDLER_CLASS =
+            "com.android.systemui.navigationbar.gestural.EdgeBackGestureHandler";
 
     private static final int GAMMA_SPACE_MAX = 65535;
     private static final float STATUS_BAR_Y_FRACTION = 0.06f;
@@ -106,6 +108,10 @@ public class BrightnessGestureHook implements IXposedHookLoadPackage {
     // same stream and its pilferPointers() would CANCEL the SBV stream, killing the
     // gesture. The monitor skips any stream whose downTime matches this.
     private volatile long mSbvStreamDownTime = -1;
+    // downTime of a touch stream whose DOWN landed in the status-bar strip. The ROM's
+    // EdgeBackGestureHandler is blinded to that entire stream so an edge swipe along
+    // the bar can't trigger the system back gesture mid-brightness-drag.
+    private volatile long mBackSuppressDownTime = -1;
 
     // ── Cached resources ──────────────────────────────────────────────────────
 
@@ -216,6 +222,54 @@ public class BrightnessGestureHook implements IXposedHookLoadPackage {
                 lpparam.classLoader, hookMethodFn);
         suppressShadeExpansion(lpparam.classLoader, hookMethodFn);
         hookFlingToHeight(lpparam.classLoader, hookMethodFn);
+        hookEdgeBackGesture(lpparam.classLoader, hookMethodFn);
+    }
+
+    // ── Edge back gesture suppression ─────────────────────────────────────────
+    // The ROM's system back gesture is EdgeBackGestureHandler, fed by its own
+    // "edge-swipe" input monitor in parallel with window dispatch. Pilfering from
+    // our monitor would CANCEL the status-bar stream that drives brightness (see
+    // mSbvStreamDownTime), so instead we blind the handler directly: any stream
+    // whose DOWN lands in the status-bar strip is skipped wholesale, so a
+    // horizontal swipe starting at the screen edge along the bar never arms the
+    // back gesture. Streams starting below the strip are untouched.
+    private void hookEdgeBackGesture(ClassLoader classLoader, Method hookMethodFn) {
+        try {
+            Class<?> cls = Class.forName(EDGE_BACK_HANDLER_CLASS, false, classLoader);
+            Method target = cls.getDeclaredMethod(
+                    "onInputEvent", android.view.InputEvent.class);
+            hookMethodFn.invoke(null, target, new XC_MethodHook() {
+                @Override
+                protected void beforeHookedMethod(MethodHookParam param) {
+                    if (!(param.args[0] instanceof MotionEvent)) return;
+                    MotionEvent ev = (MotionEvent) param.args[0];
+                    if (ev.getActionMasked() == MotionEvent.ACTION_DOWN) {
+                        boolean suppress = mGestureEnabled && mScreenHeight > 0
+                                && ev.getY() <= getBackSuppressBottom();
+                        mBackSuppressDownTime = suppress ? ev.getDownTime() : -1;
+                    }
+                    if (ev.getDownTime() == mBackSuppressDownTime) {
+                        param.setResult(null);
+                    }
+                }
+            });
+            XposedBridge.log(TAG + ": hooked EdgeBackGestureHandler.onInputEvent");
+        } catch (Throwable t) {
+            XposedBridge.log(TAG + ": failed to hook EdgeBackGestureHandler: " + t);
+        }
+    }
+
+    // Bottom (px) of the region where the back gesture yields to brightness. Must
+    // match the brightness gesture's own start region EXACTLY so there is no dead
+    // band where neither works: with the bar visible that's the status bar window
+    // itself; in true fullscreen it's the monitor's strip (only if the fullscreen
+    // swipe is enabled — otherwise back keeps the whole edge).
+    private float getBackSuppressBottom() {
+        if (isStatusBarHidden())
+            return mFullscreenSwipe ? getStripHeight() : 0f;
+        if (mStatusBarView != null && mStatusBarView.getHeight() > 0)
+            return mStatusBarView.getHeight();
+        return mScreenHeight * STATUS_BAR_Y_FRACTION;
     }
 
     // ── Runtime reflection to find LSPosed's real hookMethod ──────────────────
