@@ -5,11 +5,11 @@ An LSPosed module that adds a horizontal swipe gesture on the status bar to cont
 ## Features
 
 - Swipe left/right on the status bar to adjust brightness
-- Brightness indicator pill with customizable color (including Material You), opacity, text color, and vertical position
-- Auto-brightness toggle via in-app switch or Quick Settings tile
+- Brightness indicator in your choice of shape (pill, droplet, circle, star) with customizable color (including Material You), opacity, text color, shadow, and vertical position
+- Auto-brightness toggle via in-app switch or Quick Settings tile, with an option to keep the gesture active while auto-brightness is on
 - Saves and restores manual brightness when toggling auto-brightness
 - Configurable sensitivity and edge padding
-- Optional fullscreen swipe support and haptic feedback
+- Optional fullscreen swipe support and haptic feedback — brightness swipes don't trigger the back gesture or reveal the status bar
 
 ## Requirements
 
@@ -23,8 +23,10 @@ An LSPosed module that adds a horizontal swipe gesture on the status bar to cont
 ## Setup
 
 1. Install the APK
-2. Enable the module in LSPosed with scope set to **System UI**
+2. Enable the module in LSPosed with scope set to **System UI** and **System Framework**
 3. Reboot
+
+The System Framework scope keeps the status bar hidden during fullscreen brightness swipes; everything else works with the System UI scope alone.
 
 No ADB commands or manual permission grants are needed.
 
