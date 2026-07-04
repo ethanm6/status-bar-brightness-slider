@@ -206,6 +206,8 @@ public class SettingsActivity extends AppCompatActivity {
             addSwitch(card, dp, "Reverse direction",
                     "0% on the right, 100% on the left",
                     Prefs.KEY_REVERSE_SLIDER, Prefs.DEFAULT_REVERSE_SLIDER);
+            addDivider(card, dp);
+            addCurveSlider(card, dp);
         });
 
         // Footer
@@ -433,6 +435,107 @@ public class SettingsActivity extends AppCompatActivity {
         col.addView(slider, matchWidth());
         parent.addView(col, matchWidth());
         return col;
+    }
+
+    // ── Brightness curve slider (decimal ×10 pref, reset appears off-default) ─
+
+    private String curveText(float x10) {
+        return String.format(java.util.Locale.US, "%.1f", x10 / 10f);
+    }
+
+    private void addCurveSlider(LinearLayout parent, float dp) {
+        LinearLayout col = new LinearLayout(this);
+        col.setOrientation(LinearLayout.VERTICAL);
+        col.setPadding((int)(16*dp), (int)(16*dp), (int)(16*dp), (int)(12*dp));
+
+        LinearLayout titleRow = new LinearLayout(this);
+        titleRow.setOrientation(LinearLayout.HORIZONTAL);
+        titleRow.setGravity(Gravity.CENTER_VERTICAL);
+
+        TextView tv = new TextView(this);
+        tv.setText("Brightness curve");
+        tv.setTextSize(TypedValue.COMPLEX_UNIT_SP, 16);
+        tv.setTextColor(colOnSurface);
+        tv.setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL));
+        tv.setLayoutParams(new LinearLayout.LayoutParams(
+                0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+        titleRow.addView(tv);
+
+        int current = Math.max(Prefs.BRIGHTNESS_CURVE_MIN_X10,
+                Math.min(Prefs.BRIGHTNESS_CURVE_MAX_X10,
+                        Settings.Secure.getInt(getContentResolver(),
+                                Prefs.KEY_BRIGHTNESS_CURVE,
+                                Prefs.DEFAULT_BRIGHTNESS_CURVE_X10)));
+
+        // Text-style reset button, only visible while the value is off-default.
+        com.google.android.material.button.MaterialButton reset =
+                new com.google.android.material.button.MaterialButton(this, null,
+                        com.google.android.material.R.attr.borderlessButtonStyle);
+        reset.setText("Reset");
+        reset.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13);
+        reset.setMinWidth(0);
+        reset.setMinimumWidth(0);
+        reset.setMinHeight(0);
+        reset.setMinimumHeight(0);
+        reset.setPadding((int)(10*dp), (int)(4*dp), (int)(10*dp), (int)(4*dp));
+        LinearLayout.LayoutParams resetLp = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT);
+        resetLp.setMarginEnd((int)(8*dp));
+        titleRow.addView(reset, resetLp);
+
+        TextView valueLabel = new TextView(this);
+        valueLabel.setText(curveText(current));
+        valueLabel.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14);
+        valueLabel.setTextColor(colOnSurfaceVariant);
+        valueLabel.setTypeface(Typeface.DEFAULT_BOLD);
+        // Fixed-width, end-aligned value slot so the reset button to its left keeps
+        // one position instead of tracking the number's width.
+        valueLabel.setGravity(Gravity.END);
+        titleRow.addView(valueLabel, new LinearLayout.LayoutParams(
+                (int)(36*dp), LinearLayout.LayoutParams.WRAP_CONTENT));
+        col.addView(titleRow, matchWidth());
+
+        TextView dv = new TextView(this);
+        dv.setText("How strongly the slider favors the dim end — higher gives finer "
+                + "control at low brightness. 1.0 is linear");
+        dv.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14);
+        dv.setTextColor(colOnSurfaceVariant);
+        dv.setPadding(0, (int)(3*dp), 0, (int)(6*dp));
+        col.addView(dv, matchWidth());
+
+        Slider slider = new Slider(this);
+        slider.setValueFrom(Prefs.BRIGHTNESS_CURVE_MIN_X10);
+        slider.setValueTo(Prefs.BRIGHTNESS_CURVE_MAX_X10);
+        slider.setValue(current);
+        slider.setStepSize(1);
+        slider.setTickVisible(false);
+        slider.setLabelFormatter(v -> curveText(v));
+
+        // INVISIBLE (not GONE) so the button always occupies its slot and the row
+        // height/layout doesn't jump when it appears.
+        reset.setVisibility(current == Prefs.DEFAULT_BRIGHTNESS_CURVE_X10
+                ? View.INVISIBLE : View.VISIBLE);
+        slider.addOnChangeListener((s, value, fromUser) -> {
+            valueLabel.setText(curveText(value));
+            reset.setVisibility((int) value == Prefs.DEFAULT_BRIGHTNESS_CURVE_X10
+                    ? View.INVISIBLE : View.VISIBLE);
+        });
+        slider.addOnSliderTouchListener(new Slider.OnSliderTouchListener() {
+            @Override public void onStartTrackingTouch(@NonNull Slider s) {}
+            @Override public void onStopTrackingTouch(@NonNull Slider s) {
+                Prefs.setPref(SettingsActivity.this,
+                        Prefs.KEY_BRIGHTNESS_CURVE, (int) s.getValue());
+            }
+        });
+        reset.setOnClickListener(v -> {
+            slider.setValue(Prefs.DEFAULT_BRIGHTNESS_CURVE_X10);
+            Prefs.setPref(this, Prefs.KEY_BRIGHTNESS_CURVE,
+                    Prefs.DEFAULT_BRIGHTNESS_CURVE_X10);
+        });
+
+        col.addView(slider, matchWidth());
+        parent.addView(col, matchWidth());
     }
 
     // ── In-card divider ───────────────────────────────────────────────────────

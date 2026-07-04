@@ -82,8 +82,6 @@ public class BrightnessGestureHook implements IXposedHookLoadPackage {
             "com.android.server.wm.SystemGesturesPointerEventListener";
 
     private static final float STATUS_BAR_Y_FRACTION = 0.06f;
-    // Exponent applied to finger position when mapping to the brightness float. 1.0 = linear.
-    private static final float BRIGHTNESS_CURVE = 2.2f;
     // Privileged SystemUI window type for the indicator. TYPE_VOLUME_OVERLAY (2020)
     // layers ABOVE the status bar (like the volume panel) so the indicator slides over
     // it during the recoil/retract animations, and it's exempt from the 0.8-alpha clamp
@@ -177,6 +175,8 @@ public class BrightnessGestureHook implements IXposedHookLoadPackage {
     private volatile int mIndicatorShape        = Prefs.DEFAULT_INDICATOR_SHAPE;
     private volatile int mMainLight             = Prefs.DEFAULT_MAIN_LIGHT;
     private volatile int mMainDark              = Prefs.DEFAULT_MAIN_DARK;
+    // Exponent applied to finger position when mapping to the brightness float. 1.0 = linear.
+    private volatile float mBrightnessCurve     = Prefs.DEFAULT_BRIGHTNESS_CURVE_X10 / 10f;
 
     // ── Fullscreen touch overlay ──────────────────────────────────────────────
 
@@ -581,6 +581,10 @@ public class BrightnessGestureHook implements IXposedHookLoadPackage {
                     Prefs.KEY_INDICATOR_SHAPE, Prefs.DEFAULT_INDICATOR_SHAPE);
             mMainLight = Settings.Secure.getInt(cr, Prefs.KEY_MAIN_LIGHT, Prefs.DEFAULT_MAIN_LIGHT);
             mMainDark = Settings.Secure.getInt(cr, Prefs.KEY_MAIN_DARK, Prefs.DEFAULT_MAIN_DARK);
+            mBrightnessCurve = Math.max(Prefs.BRIGHTNESS_CURVE_MIN_X10,
+                    Math.min(Prefs.BRIGHTNESS_CURVE_MAX_X10,
+                            Settings.Secure.getInt(cr, Prefs.KEY_BRIGHTNESS_CURVE,
+                                    Prefs.DEFAULT_BRIGHTNESS_CURVE_X10))) / 10f;
             applyTuning();
         } catch (Throwable t) {
             mGestureEnabled = true;
@@ -1431,9 +1435,10 @@ public class BrightnessGestureHook implements IXposedHookLoadPackage {
                 : Math.max(0f, Math.min(1f, (fingerX - mEdgePaddingPx) / usable));
         // Reversed slider: 100% on the left, 0% on the right.
         if (mReverseSlider) fraction = 1f - fraction;
-        // Finger position raised to BRIGHTNESS_CURVE before mapping to the brightness float.
-        // Settled on 2.2 (the original author's value) after trying linear and 1.3.
-        float curved = (float) Math.pow(fraction, BRIGHTNESS_CURVE);
+        // Finger position raised to the curve exponent before mapping to the brightness
+        // float. User-adjustable (Advanced → Brightness curve); 2.2 is the historical
+        // default, 1.0 is linear.
+        float curved = (float) Math.pow(fraction, mBrightnessCurve);
         return Math.max(mBrightnessMin,
                 Math.min(mBrightnessMax,
                         mBrightnessMin + curved * (mBrightnessMax - mBrightnessMin)));
