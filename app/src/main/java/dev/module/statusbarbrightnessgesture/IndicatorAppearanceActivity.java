@@ -497,7 +497,7 @@ public class IndicatorAppearanceActivity extends AppCompatActivity {
 
     // ── Shape section ─────────────────────────────────────────────────────────
 
-    private TextView[] mShapeChecks;
+    private ShapeTile[] mShapeTiles;
 
     private void buildShapeSection(LinearLayout parent) {
         MaterialCardView card = new MaterialCardView(this);
@@ -509,61 +509,161 @@ public class IndicatorAppearanceActivity extends AppCompatActivity {
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
         cardLp.bottomMargin = (int)(8 * dp);
 
-        LinearLayout inner = new LinearLayout(this);
-        inner.setOrientation(LinearLayout.VERTICAL);
-        inner.setPadding(0, (int)(4*dp), 0, (int)(4*dp));
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setPadding((int)(12*dp), (int)(12*dp), (int)(12*dp), (int)(12*dp));
 
         String[] names = {"Pill", "Droplet", "Circle", "Star"};
         int[] shapes = {Prefs.INDICATOR_SHAPE_PILL, Prefs.INDICATOR_SHAPE_DROPLET,
                 Prefs.INDICATOR_SHAPE_CIRCLE, Prefs.INDICATOR_SHAPE_STAR};
-        mShapeChecks = new TextView[shapes.length];
+        mShapeTiles = new ShapeTile[shapes.length];
         for (int i = 0; i < shapes.length; i++) {
             final int shape = shapes[i];
-            LinearLayout row = new LinearLayout(this);
-            row.setOrientation(LinearLayout.HORIZONTAL);
-            row.setGravity(Gravity.CENTER_VERTICAL);
-            row.setPadding((int)(20*dp), (int)(14*dp), (int)(20*dp), (int)(14*dp));
-            row.setClickable(true);
-            TypedValue ripple = new TypedValue();
-            getTheme().resolveAttribute(android.R.attr.selectableItemBackground, ripple, true);
-            row.setBackgroundResource(ripple.resourceId);
-
-            TextView label = new TextView(this);
-            label.setText(names[i]);
-            label.setTextSize(TypedValue.COMPLEX_UNIT_SP, 16);
-            label.setTextColor(colOnSurface);
-            label.setTypeface(android.graphics.Typeface.create("sans-serif-medium",
-                    android.graphics.Typeface.NORMAL));
-            row.addView(label, new LinearLayout.LayoutParams(
-                    0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
-
-            TextView check = new TextView(this);
-            check.setText("✓");
-            check.setTextSize(TypedValue.COMPLEX_UNIT_SP, 18);
-            check.setTextColor(colPrimary);
-            check.setVisibility(mShape == shape ? View.VISIBLE : View.INVISIBLE);
-            mShapeChecks[i] = check;
-            row.addView(check);
-
-            row.setOnClickListener(v -> selectShape(shape));
-            inner.addView(row, new LinearLayout.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+            ShapeTile tile = new ShapeTile(names[i], shape);
+            tile.setSelectedState(mShape == shape, false);
+            tile.setOnClickListener(v -> selectShape(shape));
+            mShapeTiles[i] = tile;
+            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
+                    0, (int)(92 * dp), 1f);
+            if (i > 0) lp.leftMargin = (int)(8 * dp);
+            row.addView(tile, lp);
         }
 
-        card.addView(inner, new ViewGroup.LayoutParams(
+        card.addView(row, new ViewGroup.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
         parent.addView(card, cardLp);
     }
 
     private void selectShape(int shape) {
+        if (mShape == shape) return;
         mShape = shape;
         Prefs.setPref(this, Prefs.KEY_INDICATOR_SHAPE, shape);
-        int[] shapes = {Prefs.INDICATOR_SHAPE_PILL, Prefs.INDICATOR_SHAPE_DROPLET,
-                Prefs.INDICATOR_SHAPE_CIRCLE, Prefs.INDICATOR_SHAPE_STAR};
-        for (int i = 0; i < mShapeChecks.length; i++) {
-            mShapeChecks[i].setVisibility(mShape == shapes[i] ? View.VISIBLE : View.INVISIBLE);
+        for (ShapeTile tile : mShapeTiles) {
+            tile.setSelectedState(tile.mShapeId == shape, true);
         }
         invalidatePreviews();
+    }
+
+    /**
+     * One tile of the shape selector: a rounded surface that draws a miniature of
+     * the actual indicator shape (via the shared IndicatorDrawing paths) with its
+     * name underneath. Selecting a tile morphs it — the corner radius grows, the
+     * fill sweeps to secondary-container, and the glyph springs slightly — matching
+     * the expressive segmented pickers on Android 16 settings pages.
+     */
+    private class ShapeTile extends View {
+        final int mShapeId;
+        private final String mLabel;
+        private float mFrac;            // 0 = unselected, 1 = selected
+        private android.animation.ValueAnimator mAnim;
+
+        private final Paint mBgPaint    = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final Paint mGlyphPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final Paint mGlyphText  = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final Paint mLabelPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final RectF mRect = new RectF();
+
+        private final int colTileBg = androidx.core.graphics.ColorUtils.blendARGB(
+                colSurfaceContainer, colOnSurface, 0.06f);
+        private final int colTileSel = resolveAttr(
+                com.google.android.material.R.attr.colorSecondaryContainer,
+                androidx.core.graphics.ColorUtils.blendARGB(colSurfaceContainer, colPrimary, 0.25f));
+        private final int colOnTileSel = resolveAttr(
+                com.google.android.material.R.attr.colorOnSecondaryContainer, colOnSurface);
+
+        ShapeTile(String label, int shapeId) {
+            super(IndicatorAppearanceActivity.this);
+            mLabel = label;
+            mShapeId = shapeId;
+            setClickable(true);
+            setContentDescription(label + " indicator shape");
+            mLabelPaint.setTextAlign(Paint.Align.CENTER);
+            mLabelPaint.setTextSize(12 * getResources().getDisplayMetrics().scaledDensity);
+            mLabelPaint.setTypeface(android.graphics.Typeface.create(
+                    "sans-serif-medium", android.graphics.Typeface.NORMAL));
+        }
+
+        void setSelectedState(boolean sel, boolean animate) {
+            float target = sel ? 1f : 0f;
+            if (mAnim != null) mAnim.cancel();
+            if (!animate) {
+                mFrac = target;
+                invalidate();
+                return;
+            }
+            mAnim = android.animation.ValueAnimator.ofFloat(mFrac, target);
+            mAnim.setDuration(sel ? 340 : 240);
+            mAnim.setInterpolator(new android.view.animation.DecelerateInterpolator(1.6f));
+            mAnim.addUpdateListener(a -> {
+                mFrac = (float) a.getAnimatedValue();
+                invalidate();
+            });
+            mAnim.start();
+        }
+
+        @Override protected void onDraw(Canvas canvas) {
+            float w = getWidth(), h = getHeight();
+            float f = mFrac;
+
+            // Surface: 18dp rounded rect that swells toward a squircle and sweeps
+            // to the secondary-container colour as it becomes selected.
+            float radius = (18 * dp) + (h / 2f - 18 * dp) * f * 0.5f;
+            mBgPaint.setColor(androidx.core.graphics.ColorUtils.blendARGB(
+                    colTileBg, colTileSel, f));
+            mRect.set(0, 0, w, h);
+            canvas.drawRoundRect(mRect, radius, radius, mBgPaint);
+
+            int glyphCol = androidx.core.graphics.ColorUtils.blendARGB(
+                    colOnSurfaceVariant, colOnTileSel, f);
+            int labelCol = androidx.core.graphics.ColorUtils.blendARGB(
+                    colOnSurfaceVariant, colOnTileSel, f);
+
+            float labelBase = h - 13 * dp;
+            float glyphCy = (labelBase - mLabelPaint.getTextSize()) / 2f + 3 * dp;
+            float cx = w / 2f;
+
+            // Expressive spring: the glyph pops slightly mid-transition.
+            float pop = 1f + 0.12f * (float) Math.sin(Math.PI * f);
+            canvas.save();
+            canvas.scale(pop, pop, cx, glyphCy);
+            drawGlyph(canvas, cx, glyphCy, glyphCol);
+            canvas.restore();
+
+            mLabelPaint.setColor(labelCol);
+            canvas.drawText(mLabel, cx, labelBase, mLabelPaint);
+        }
+
+        private void drawGlyph(Canvas canvas, float cx, float cy, int col) {
+            if (mShapeId == Prefs.INDICATOR_SHAPE_PILL) {
+                float pw = 34 * dp, ph = 18 * dp;
+                mGlyphPaint.setColor(col);
+                mGlyphPaint.setStyle(Paint.Style.FILL);
+                mGlyphPaint.clearShadowLayer();
+                mRect.set(cx - pw / 2f, cy - ph / 2f, cx + pw / 2f, cy + ph / 2f);
+                canvas.drawRoundRect(mRect, ph / 2f, ph / 2f, mGlyphPaint);
+            } else if (mShapeId == Prefs.INDICATOR_SHAPE_DROPLET) {
+                float gh = 30 * dp, gw = gh / IndicatorDrawing.DROPLET_HEIGHT_FACTOR * 2f;
+                canvas.save();
+                canvas.translate(cx - gw / 2f, cy - gh / 2f);
+                IndicatorDrawing.drawDroplet(canvas, gw, gh, 0, col, 255,
+                        col, 1f, false, dp, "", mGlyphPaint, mGlyphText);
+                canvas.restore();
+            } else if (mShapeId == Prefs.INDICATOR_SHAPE_CIRCLE) {
+                float gd = 24 * dp;
+                canvas.save();
+                canvas.translate(cx - gd / 2f, cy - gd / 2f);
+                IndicatorDrawing.drawCircle(canvas, gd, gd, 0, col, 255,
+                        col, 1f, false, dp, "", mGlyphPaint, mGlyphText);
+                canvas.restore();
+            } else {
+                float gw = 28 * dp, gh = gw * IndicatorDrawing.STAR_HEIGHT_FACTOR;
+                canvas.save();
+                canvas.translate(cx - gw / 2f, cy - gh / 2f);
+                IndicatorDrawing.drawStar(canvas, gw, gh, 0, col, 255,
+                        col, 1f, false, dp, "", mGlyphPaint, mGlyphText);
+                canvas.restore();
+            }
+        }
     }
 
     // ── Shadow section ────────────────────────────────────────────────────────
