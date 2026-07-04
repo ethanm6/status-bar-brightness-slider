@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Recommended LSPosed scope. "android" (system framework) is needed to blind
+         system_server's swipe-from-top detector during fullscreen brightness swipes. -->
+    <string-array name="xposedscope">
+        <item>com.android.systemui</item>
+        <item>system</item>
+    </string-array>
+</resources>

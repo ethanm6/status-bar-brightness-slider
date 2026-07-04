@@ -32,6 +32,7 @@ public final class Prefs {
     public static final String KEY_SENSITIVITY           = "sbbrightness_sensitivity";
     public static final String KEY_EDGE_PADDING_DP       = "sbbrightness_edge_padding_dp";
     public static final String KEY_AUTO_BRIGHTNESS        = "sbbrightness_auto_brightness";
+    public static final String KEY_KEEP_GESTURE_ON_AUTO   = "sbbrightness_keep_gesture_on_auto";
     public static final String KEY_SAVED_BRIGHTNESS       = "sbbrightness_saved_brightness";
     public static final String KEY_INDICATOR_Y_POSITION   = "sbbrightness_indicator_y_position";
 
@@ -68,6 +69,7 @@ public final class Prefs {
     public static final int DEFAULT_SENSITIVITY          = 7;
     public static final int DEFAULT_EDGE_PADDING_DP      = 0;
     public static final int DEFAULT_AUTO_BRIGHTNESS      = 0;
+    public static final int DEFAULT_KEEP_GESTURE_ON_AUTO = 0;
     public static final int DEFAULT_INDICATOR_Y_POSITION = 9;
     public static final int INDICATOR_Y_POSITION_MAX     = 50;
 
@@ -89,6 +91,8 @@ public final class Prefs {
     // Shape constants
     public static final int INDICATOR_SHAPE_PILL     = 0;
     public static final int INDICATOR_SHAPE_DROPLET = 1;
+    public static final int INDICATOR_SHAPE_CIRCLE  = 2;
+    public static final int INDICATOR_SHAPE_STAR    = 3;
 
     // Text color mode constants
     public static final int TEXT_COLOR_MODE_AUTO         = 0;

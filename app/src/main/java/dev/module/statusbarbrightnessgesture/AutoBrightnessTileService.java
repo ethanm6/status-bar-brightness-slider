@@ -41,7 +41,9 @@ public class AutoBrightnessTileService extends TileService {
         boolean enabling = tile.getState() != Tile.STATE_ACTIVE;
         // The hook (in SystemUI) persists these — the app has no WRITE_SECURE_SETTINGS grant.
         Prefs.setPref(this, Prefs.KEY_AUTO_BRIGHTNESS, enabling ? 1 : 0);
-        Prefs.setPref(this, Prefs.KEY_GESTURE_ENABLED, enabling ? 0 : 1);
+        boolean keepGesture = Settings.Secure.getInt(getContentResolver(),
+                Prefs.KEY_KEEP_GESTURE_ON_AUTO, Prefs.DEFAULT_KEEP_GESTURE_ON_AUTO) == 1;
+        if (!keepGesture) Prefs.setPref(this, Prefs.KEY_GESTURE_ENABLED, enabling ? 0 : 1);
         tile.setState(enabling ? Tile.STATE_ACTIVE : Tile.STATE_INACTIVE);
         tile.updateTile();
     }

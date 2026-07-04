@@ -81,6 +81,8 @@ public class BrightnessGestureHook implements IXposedHookLoadPackage {
             "com.android.settingslib.display.BrightnessUtils";
     private static final String EDGE_BACK_HANDLER_CLASS =
             "com.android.systemui.navigationbar.gestural.EdgeBackGestureHandler";
+    private static final String SYSTEM_GESTURES_LISTENER_CLASS =
+            "com.android.server.wm.SystemGesturesPointerEventListener";
 
     private static final int GAMMA_SPACE_MAX = 65535;
     private static final float STATUS_BAR_Y_FRACTION = 0.06f;
@@ -163,6 +165,7 @@ public class BrightnessGestureHook implements IXposedHookLoadPackage {
     private volatile boolean mOverlayEnabled     = true;
     private volatile boolean mBlockLongPressQS  = false;
     private volatile boolean mFullscreenSwipe   = false;
+    private volatile boolean mKeepGestureOnAuto = false;
     private volatile boolean mHapticEnabled     = false;
     private volatile int mSensitivity       = Prefs.DEFAULT_SENSITIVITY;
     private volatile int mEdgePaddingDp     = Prefs.DEFAULT_EDGE_PADDING_DP;
@@ -204,6 +207,15 @@ public class BrightnessGestureHook implements IXposedHookLoadPackage {
 
     @Override
     public void handleLoadPackage(XC_LoadPackage.LoadPackageParam lpparam) throws Throwable {
+        if ("android".equals(lpparam.packageName)) {
+            Method sysHookMethodFn = findHookMethod();
+            if (sysHookMethodFn == null) {
+                XposedBridge.log(TAG + ": could not find hookMethod() — aborting (system)");
+                return;
+            }
+            hookSystemGestures(lpparam.classLoader, sysHookMethodFn);
+            return;
+        }
         if (!SYSTEMUI_PACKAGE.equals(lpparam.packageName)) return;
 
         XposedBridge.log(TAG + ": loading in SystemUI");
@@ -257,6 +269,127 @@ public class BrightnessGestureHook implements IXposedHookLoadPackage {
         } catch (Throwable t) {
             XposedBridge.log(TAG + ": failed to hook EdgeBackGestureHandler: " + t);
         }
+    }
+
+    // ── system_server: transient-status-bar suppression ──────────────────────
+    // The swipe-from-top reveal of the transient status bar is detected by
+    // SystemGesturesPointerEventListener inside system_server, which taps the raw
+    // pointer stream BEFORE window dispatch — pilferPointers() from our SystemUI
+    // gesture monitor does not cancel it, so a fullscreen brightness swipe with a
+    // little downward drift still slid the bar in. This hook runs in the "android"
+    // (system framework) scope and blinds that listener to a top-strip stream once
+    // it turns horizontal-dominant under the SAME activation rule the brightness
+    // gesture uses (slop + ratio from the sensitivity pref, read from
+    // Settings.Secure). Blinding starts mid-stream, never at DOWN, so a plain
+    // vertical swipe-from-top still reveals the bars normally.
+
+    private long mSysTrackDownTime = -1;   // top-strip stream being watched
+    private long mSysBlindDownTime = -1;   // stream claimed by the brightness gesture
+    private float mSysDownX, mSysDownY;
+    private Context mSysContext;
+    private java.lang.reflect.Field mSysThresholdField;
+    private long mSysPrefsReadAt = -1;
+    private boolean mSysEnabled;
+    private float mSysSlopPx = 48f;
+    private float mSysRatio = 2.0f;
+
+    private void hookSystemGestures(ClassLoader classLoader, Method hookMethodFn) {
+        try {
+            Class<?> cls = Class.forName(SYSTEM_GESTURES_LISTENER_CLASS, false, classLoader);
+            Method target = cls.getDeclaredMethod("onPointerEvent", MotionEvent.class);
+            hookMethodFn.invoke(null, target, new XC_MethodHook() {
+                @Override
+                protected void beforeHookedMethod(MethodHookParam param) {
+                    try {
+                        MotionEvent ev = (MotionEvent) param.args[0];
+                        int action = ev.getActionMasked();
+                        if (action == MotionEvent.ACTION_DOWN) {
+                            mSysBlindDownTime = -1;
+                            mSysTrackDownTime = -1;
+                            if ((ev.getSource() & android.view.InputDevice.SOURCE_TOUCHSCREEN)
+                                        == android.view.InputDevice.SOURCE_TOUCHSCREEN
+                                    && ev.getY() <= sysSwipeStartTop(param.thisObject)
+                                    && sysGestureEnabled(param.thisObject)) {
+                                mSysTrackDownTime = ev.getDownTime();
+                                mSysDownX = ev.getX();
+                                mSysDownY = ev.getY();
+                            }
+                        } else if (action == MotionEvent.ACTION_MOVE
+                                && ev.getDownTime() == mSysTrackDownTime) {
+                            float dx = Math.abs(ev.getX() - mSysDownX);
+                            float dy = Math.abs(ev.getY() - mSysDownY);
+                            if (dx > mSysSlopPx && dx > dy * mSysRatio) {
+                                // The brightness gesture claims this stream; hide the
+                                // rest of it from the swipe-from-top detector.
+                                mSysBlindDownTime = mSysTrackDownTime;
+                                mSysTrackDownTime = -1;
+                            } else if (dy > mSysSlopPx && dy > dx) {
+                                // Clearly vertical — a deliberate bar reveal. Stop
+                                // watching; the system handles it natively.
+                                mSysTrackDownTime = -1;
+                            }
+                        }
+                        if (ev.getDownTime() == mSysBlindDownTime) param.setResult(null);
+                    } catch (Throwable t) {
+                        mSysTrackDownTime = -1;
+                        mSysBlindDownTime = -1;
+                    }
+                }
+            });
+            XposedBridge.log(TAG + ": hooked SystemGesturesPointerEventListener.onPointerEvent");
+        } catch (Throwable t) {
+            XposedBridge.log(TAG + ": failed to hook SystemGesturesPointerEventListener: " + t);
+        }
+    }
+
+    // Top region (px) inside which system_server can start swipe-from-top detection.
+    // Streams starting below it can never fire the transient reveal, so they are
+    // never tracked. Falls back to a generous strip if the field is missing.
+    private float sysSwipeStartTop(Object listener) {
+        try {
+            if (mSysThresholdField == null) {
+                mSysThresholdField = listener.getClass().getDeclaredField("mSwipeStartThreshold");
+                mSysThresholdField.setAccessible(true);
+            }
+            return ((android.graphics.Rect) mSysThresholdField.get(listener)).top;
+        } catch (Throwable t) {
+            return 150f;
+        }
+    }
+
+    // Prefs gate + tuning for the system-side suppression, mirroring applyTuning().
+    // Re-read at most every 2s; DOWNs in the strip are infrequent and Settings reads
+    // are cached client-side, so this stays off the hot path.
+    private boolean sysGestureEnabled(Object listener) {
+        long now = android.os.SystemClock.uptimeMillis();
+        if (mSysPrefsReadAt < 0 || now - mSysPrefsReadAt > 2000) {
+            mSysPrefsReadAt = now;
+            try {
+                if (mSysContext == null) {
+                    java.lang.reflect.Field f =
+                            listener.getClass().getDeclaredField("mContext");
+                    f.setAccessible(true);
+                    mSysContext = (Context) f.get(listener);
+                }
+                android.content.ContentResolver cr = mSysContext.getContentResolver();
+                mSysEnabled = Settings.Secure.getInt(cr,
+                            Prefs.KEY_GESTURE_ENABLED, Prefs.DEFAULT_GESTURE_ENABLED) == 1
+                        && Settings.Secure.getInt(cr,
+                            Prefs.KEY_FULLSCREEN_SWIPE, Prefs.DEFAULT_FULLSCREEN_SWIPE) == 1;
+                int s = Math.max(Prefs.SENSITIVITY_MIN, Math.min(Prefs.SENSITIVITY_MAX,
+                        Settings.Secure.getInt(cr,
+                            Prefs.KEY_SENSITIVITY, Prefs.DEFAULT_SENSITIVITY)));
+                float density = mSysContext.getResources().getDisplayMetrics().density;
+                float baseSlop = Math.max(
+                        ViewConfiguration.get(mSysContext).getScaledTouchSlop(),
+                        12f * density);
+                mSysSlopPx = baseSlop + (10 - s) * 8f * density;
+                mSysRatio = 1.5f + (10 - s) * 0.25f;
+            } catch (Throwable t) {
+                mSysEnabled = false;
+            }
+        }
+        return mSysEnabled;
     }
 
     // Bottom (px) of the region where the back gesture yields to brightness. Must
@@ -401,7 +534,7 @@ public class BrightnessGestureHook implements IXposedHookLoadPackage {
                             Settings.System.SCREEN_BRIGHTNESS_MODE_MANUAL);
                     boolean auto = (mode == Settings.System.SCREEN_BRIGHTNESS_MODE_AUTOMATIC);
                     Settings.Secure.putInt(cr, Prefs.KEY_AUTO_BRIGHTNESS, auto ? 1 : 0);
-                    if (auto) {
+                    if (auto && !mKeepGestureOnAuto) {
                         Settings.Secure.putInt(cr, Prefs.KEY_GESTURE_ENABLED, 0);
                         mGestureEnabled = false;
                     }
@@ -423,6 +556,8 @@ public class BrightnessGestureHook implements IXposedHookLoadPackage {
                     Prefs.KEY_BLOCK_LONGPRESS_QS, Prefs.DEFAULT_BLOCK_LONGPRESS_QS) == 1;
             mFullscreenSwipe = Settings.Secure.getInt(cr,
                     Prefs.KEY_FULLSCREEN_SWIPE, Prefs.DEFAULT_FULLSCREEN_SWIPE) == 1;
+            mKeepGestureOnAuto = Settings.Secure.getInt(cr,
+                    Prefs.KEY_KEEP_GESTURE_ON_AUTO, Prefs.DEFAULT_KEEP_GESTURE_ON_AUTO) == 1;
             mHapticEnabled = Settings.Secure.getInt(cr,
                     Prefs.KEY_HAPTIC_FEEDBACK, Prefs.DEFAULT_HAPTIC_FEEDBACK) == 1;
             mSensitivity = Settings.Secure.getInt(cr,
@@ -455,6 +590,7 @@ public class BrightnessGestureHook implements IXposedHookLoadPackage {
             mOverlayEnabled = true;
             mBlockLongPressQS = false;
             mFullscreenSwipe = false;
+            mKeepGestureOnAuto = false;
             mSensitivity = Prefs.DEFAULT_SENSITIVITY;
             mEdgePaddingDp = Prefs.DEFAULT_EDGE_PADDING_DP;
             applyTuning();
@@ -669,10 +805,10 @@ public class BrightnessGestureHook implements IXposedHookLoadPackage {
 
             mIndicatorTextView = null;
             mDropletView = null;
-            if (mIndicatorShape == Prefs.INDICATOR_SHAPE_DROPLET) {
-                initIndicatorDroplet(context, accent, textCol, d);
-            } else {
+            if (mIndicatorShape == Prefs.INDICATOR_SHAPE_PILL) {
                 initIndicatorPill(context, accent, textCol, d);
+            } else {
+                initIndicatorDrawn(context, accent, textCol, d, mIndicatorShape);
             }
 
             // See TYPE_INDICATOR_WINDOW: a privileged SystemUI type that layers above the
@@ -773,19 +909,28 @@ public class BrightnessGestureHook implements IXposedHookLoadPackage {
         }
     }
 
-    private void initIndicatorDroplet(Context context, int accent, int textCol, float d) {
+    private void initIndicatorDrawn(Context context, int accent, int textCol, float d,
+                                     int shape) {
         final float textSizePx = 13f * context.getResources()
                 .getDisplayMetrics().scaledDensity;
         Paint measure = new Paint(Paint.ANTI_ALIAS_FLAG);
-        float r = IndicatorDrawing.bulbRadius(d, textSizePx, measure);
-        // Shadow needs blur room around the drop; the window is sized to include it.
+        // Shadow needs blur room around the shape; the window is sized to include it.
         int pad = mIndicatorShadow ? (int)(16 * d) : 0;
         mIndicatorShadowPad = pad;
-        mIndicatorW = IndicatorDrawing.dropletWidth(r) + 2 * pad;
-        mIndicatorH = IndicatorDrawing.dropletHeight(r) + 2 * pad;
+        if (shape == Prefs.INDICATOR_SHAPE_STAR) {
+            float s = IndicatorDrawing.starContentWidth(d, textSizePx, measure);
+            mIndicatorW = IndicatorDrawing.starWidth(s) + 2 * pad;
+            mIndicatorH = IndicatorDrawing.starHeight(s) + 2 * pad;
+        } else {
+            float r = IndicatorDrawing.bulbRadius(d, textSizePx, measure);
+            mIndicatorW = IndicatorDrawing.dropletWidth(r) + 2 * pad;
+            mIndicatorH = (shape == Prefs.INDICATOR_SHAPE_CIRCLE
+                    ? IndicatorDrawing.dropletWidth(r)
+                    : IndicatorDrawing.dropletHeight(r)) + 2 * pad;
+        }
 
         DropletView view = new DropletView(context, accent, textCol, textSizePx,
-                mIndicatorShadow, d, pad);
+                mIndicatorShadow, d, pad, shape);
         if (mIndicatorShadow) {
             view.setLayerType(android.view.View.LAYER_TYPE_SOFTWARE, null);
         }
@@ -793,28 +938,38 @@ public class BrightnessGestureHook implements IXposedHookLoadPackage {
         mIndicatorView = view;
     }
 
-    /** Custom view that canvas-draws the point-up droplet (shared with the preview). */
+    /** Custom view that canvas-draws the droplet, circle or star (shared with the preview). */
     private static final class DropletView extends android.view.View {
         private final Paint mFill = new Paint(Paint.ANTI_ALIAS_FLAG);
         private final Paint mText = new Paint(Paint.ANTI_ALIAS_FLAG);
-        private final int mFillColor, mTextColor;
+        private final int mFillColor, mTextColor, mShape;
         private final float mTextSizePx, mDensity, mPad;
         private final boolean mShadow;
         private String mValue = "100%";
 
         DropletView(Context c, int fill, int text, float textSizePx,
-                     boolean shadow, float density, float pad) {
+                     boolean shadow, float density, float pad, int shape) {
             super(c);
             mFillColor = fill; mTextColor = text; mTextSizePx = textSizePx;
-            mShadow = shadow; mDensity = density; mPad = pad;
+            mShadow = shadow; mDensity = density; mPad = pad; mShape = shape;
         }
 
         void setValue(String v) { mValue = v; invalidate(); }
 
         @Override protected void onDraw(Canvas canvas) {
-            IndicatorDrawing.drawDroplet(canvas, getWidth(), getHeight(), mPad,
-                    mFillColor, 255, mTextColor, mTextSizePx,
-                    mShadow, mDensity, mValue, mFill, mText);
+            if (mShape == Prefs.INDICATOR_SHAPE_STAR) {
+                IndicatorDrawing.drawStar(canvas, getWidth(), getHeight(), mPad,
+                        mFillColor, 255, mTextColor, mTextSizePx,
+                        mShadow, mDensity, mValue, mFill, mText);
+            } else if (mShape == Prefs.INDICATOR_SHAPE_CIRCLE) {
+                IndicatorDrawing.drawCircle(canvas, getWidth(), getHeight(), mPad,
+                        mFillColor, 255, mTextColor, mTextSizePx,
+                        mShadow, mDensity, mValue, mFill, mText);
+            } else {
+                IndicatorDrawing.drawDroplet(canvas, getWidth(), getHeight(), mPad,
+                        mFillColor, 255, mTextColor, mTextSizePx,
+                        mShadow, mDensity, mValue, mFill, mText);
+            }
         }
     }
 

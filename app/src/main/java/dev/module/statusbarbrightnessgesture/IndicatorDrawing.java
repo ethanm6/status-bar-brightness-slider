@@ -121,6 +121,143 @@ final class IndicatorDrawing {
                 cyB - (textPaint.descent() + textPaint.ascent()) / 2f, textPaint);
     }
 
+    /**
+     * Draw a plain circle into the region [pad, pad, w-pad, h-pad] with the value
+     * text centred. Same bulb sizing as the droplet, so "100%" always fits.
+     */
+    static void drawCircle(Canvas canvas, float w, float h, float pad,
+                            int fillColor, int alpha255, int textColor, float textSizePx,
+                            boolean shadow, float density, String text,
+                            Paint fill, Paint textPaint) {
+        float left = pad, right = w - pad, top = pad, bottom = h - pad;
+        float R  = (right - left) / 2f;
+        float cx = left + R;
+        float cy = top + (bottom - top) / 2f;
+
+        fill.setStyle(Paint.Style.FILL);
+        fill.setColor(fillColor);
+        fill.setAlpha(alpha255);
+        if (shadow) {
+            int shadowAlpha = Math.round(0x66 * alpha255 / 255f);
+            fill.setShadowLayer(8 * density, 0, 3 * density, shadowAlpha << 24);
+        } else {
+            fill.clearShadowLayer();
+        }
+        canvas.drawCircle(cx, cy, R, fill);
+
+        textPaint.setColor(textColor);
+        textPaint.setAlpha(alpha255);
+        textPaint.setTextSize(textSizePx);
+        textPaint.setTypeface(Typeface.DEFAULT_BOLD);
+        textPaint.setTextAlign(Paint.Align.CENTER);
+        canvas.drawText(text, cx,
+                cy - (textPaint.descent() + textPaint.ascent()) / 2f, textPaint);
+    }
+
+    // Rounded five-point star, traced verbatim from the PT (Brazil) 2021 logo SVG
+    // and normalized to a unit width. Point up, bezier-rounded tips and valleys.
+    static final float STAR_HEIGHT_FACTOR  = 0.956435f; // height = this × width
+    static final float STAR_CENTER_Y       = 0.52573f;  // circumcentre y = this × width
+    static final float STAR_TEXT_MARGIN_DP = 3f;        // clearance of the text corners to the star edges
+
+    /**
+     * Content width (px, excluding shadow padding) whose star fits "100%".
+     * Sized so the text-rect corners clear the star's arm edges (the binding
+     * ones are the lower-arm edges near the bottom valleys), which allows a
+     * much smaller star than fitting the whole inscribed circle.
+     */
+    static float starContentWidth(float density, float textSizePx, Paint textPaint) {
+        textPaint.setTextSize(textSizePx);
+        textPaint.setTypeface(Typeface.DEFAULT_BOLD);
+        float wHalf = textPaint.measureText("100%") / 2f + STAR_TEXT_MARGIN_DP * density;
+        Paint.FontMetrics fm = textPaint.getFontMetrics();
+        float hHalf = (fm.bottom - fm.top) / 2f;
+        // Edge-line normals of the unit-width star (text centred on the circumcentre):
+        // bottom corners vs. valley→bottom-tip edges, top corners vs. tip→valley edges.
+        float s1 = (0.95106f * wHalf - 0.30902f * hHalf) / 0.20008f;
+        float s2 = (0.58778f * wHalf - 0.80900f * hHalf) / 0.19688f;
+        return Math.max(s1, s2);
+    }
+
+    static int starWidth(float s)  { return Math.round(s); }
+    static int starHeight(float s) { return Math.round(s * STAR_HEIGHT_FACTOR); }
+
+    /**
+     * Draw the rounded star into the region [pad, pad, w-pad, h-pad] with the
+     * value text centred on the star's circumcentre.
+     */
+    static void drawStar(Canvas canvas, float w, float h, float pad,
+                          int fillColor, int alpha255, int textColor, float textSizePx,
+                          boolean shadow, float density, String text,
+                          Paint fill, Paint textPaint) {
+        float s = w - 2 * pad;   // content width; height is s × STAR_HEIGHT_FACTOR
+        float ox = pad, oy = pad;
+
+        Path p = new Path();
+        p.moveTo(ox + 0.55179f*s, oy + 0.03763f*s);
+        p.lineTo(ox + 0.63249f*s, oy + 0.28601f*s);
+        p.cubicTo(ox + 0.63978f*s, oy + 0.30845f*s,
+                  ox + 0.66069f*s, oy + 0.32364f*s,
+                  ox + 0.68428f*s, oy + 0.32364f*s);
+        p.lineTo(ox + 0.94545f*s, oy + 0.32364f*s);
+        p.cubicTo(ox + 0.99819f*s, oy + 0.32364f*s,
+                  ox + 1.02012f*s, oy + 0.39113f*s,
+                  ox + 0.97745f*s, oy + 0.42214f*s);
+        p.lineTo(ox + 0.76616f*s, oy + 0.57565f*s);
+        p.cubicTo(ox + 0.74708f*s, oy + 0.58952f*s,
+                  ox + 0.73909f*s, oy + 0.61409f*s,
+                  ox + 0.74638f*s, oy + 0.63652f*s);
+        p.lineTo(ox + 0.82709f*s, oy + 0.88491f*s);
+        p.cubicTo(ox + 0.84338f*s, oy + 0.93508f*s,
+                  ox + 0.78597f*s, oy + 0.97679f*s,
+                  ox + 0.74330f*s, oy + 0.94579f*s);
+        p.lineTo(ox + 0.53201f*s, oy + 0.79228f*s);
+        p.cubicTo(ox + 0.51292f*s, oy + 0.77841f*s,
+                  ox + 0.48708f*s, oy + 0.77841f*s,
+                  ox + 0.46799f*s, oy + 0.79228f*s);
+        p.lineTo(ox + 0.25670f*s, oy + 0.94579f*s);
+        p.cubicTo(ox + 0.21403f*s, oy + 0.97679f*s,
+                  ox + 0.15661f*s, oy + 0.93508f*s,
+                  ox + 0.17291f*s, oy + 0.88491f*s);
+        p.lineTo(ox + 0.25362f*s, oy + 0.63652f*s);
+        p.cubicTo(ox + 0.26091f*s, oy + 0.61409f*s,
+                  ox + 0.25292f*s, oy + 0.58952f*s,
+                  ox + 0.23384f*s, oy + 0.57565f*s);
+        p.lineTo(ox + 0.02255f*s, oy + 0.42214f*s);
+        p.cubicTo(ox + -0.02012f*s, oy + 0.39113f*s,
+                  ox + 0.00181f*s, oy + 0.32364f*s,
+                  ox + 0.05455f*s, oy + 0.32364f*s);
+        p.lineTo(ox + 0.31572f*s, oy + 0.32364f*s);
+        p.cubicTo(ox + 0.33931f*s, oy + 0.32364f*s,
+                  ox + 0.36022f*s, oy + 0.30845f*s,
+                  ox + 0.36751f*s, oy + 0.28601f*s);
+        p.lineTo(ox + 0.44821f*s, oy + 0.03763f*s);
+        p.cubicTo(ox + 0.46451f*s, oy + -0.01254f*s,
+                  ox + 0.53549f*s, oy + -0.01254f*s,
+                  ox + 0.55179f*s, oy + 0.03763f*s);
+        p.close();
+
+        fill.setStyle(Paint.Style.FILL);
+        fill.setColor(fillColor);
+        fill.setAlpha(alpha255);
+        if (shadow) {
+            int shadowAlpha = Math.round(0x66 * alpha255 / 255f);
+            fill.setShadowLayer(8 * density, 0, 3 * density, shadowAlpha << 24);
+        } else {
+            fill.clearShadowLayer();
+        }
+        canvas.drawPath(p, fill);
+
+        textPaint.setColor(textColor);
+        textPaint.setAlpha(alpha255);
+        textPaint.setTextSize(textSizePx);
+        textPaint.setTypeface(Typeface.DEFAULT_BOLD);
+        textPaint.setTextAlign(Paint.Align.CENTER);
+        canvas.drawText(text, ox + 0.5f * s,
+                oy + STAR_CENTER_Y * s
+                        - (textPaint.descent() + textPaint.ascent()) / 2f, textPaint);
+    }
+
     /** Signed sweep (deg) from `from` to `to` that passes through `via`. */
     private static float sweepThrough(float from, float to, float via) {
         float pos = ((to - from) % 360f + 360f) % 360f;   // clockwise 0..360

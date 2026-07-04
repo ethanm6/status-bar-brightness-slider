@@ -513,10 +513,11 @@ public class IndicatorAppearanceActivity extends AppCompatActivity {
         inner.setOrientation(LinearLayout.VERTICAL);
         inner.setPadding(0, (int)(4*dp), 0, (int)(4*dp));
 
-        String[] names = {"Pill", "Droplet"};
-        int[] shapes = {Prefs.INDICATOR_SHAPE_PILL, Prefs.INDICATOR_SHAPE_DROPLET};
-        mShapeChecks = new TextView[2];
-        for (int i = 0; i < 2; i++) {
+        String[] names = {"Pill", "Droplet", "Circle", "Star"};
+        int[] shapes = {Prefs.INDICATOR_SHAPE_PILL, Prefs.INDICATOR_SHAPE_DROPLET,
+                Prefs.INDICATOR_SHAPE_CIRCLE, Prefs.INDICATOR_SHAPE_STAR};
+        mShapeChecks = new TextView[shapes.length];
+        for (int i = 0; i < shapes.length; i++) {
             final int shape = shapes[i];
             LinearLayout row = new LinearLayout(this);
             row.setOrientation(LinearLayout.HORIZONTAL);
@@ -557,7 +558,8 @@ public class IndicatorAppearanceActivity extends AppCompatActivity {
     private void selectShape(int shape) {
         mShape = shape;
         Prefs.setPref(this, Prefs.KEY_INDICATOR_SHAPE, shape);
-        int[] shapes = {Prefs.INDICATOR_SHAPE_PILL, Prefs.INDICATOR_SHAPE_DROPLET};
+        int[] shapes = {Prefs.INDICATOR_SHAPE_PILL, Prefs.INDICATOR_SHAPE_DROPLET,
+                Prefs.INDICATOR_SHAPE_CIRCLE, Prefs.INDICATOR_SHAPE_STAR};
         for (int i = 0; i < mShapeChecks.length; i++) {
             mShapeChecks[i].setVisibility(mShape == shapes[i] ? View.VISIBLE : View.INVISIBLE);
         }
@@ -998,6 +1000,35 @@ public class IndicatorAppearanceActivity extends AppCompatActivity {
                 canvas.save();
                 canvas.translate(cx - tw / 2f, h / 2f - th / 2f);
                 IndicatorDrawing.drawDroplet(canvas, tw, th, 0,
+                        bgColor, alpha255, textCol, textSizePx,
+                        mShadow, dp, "75%", mFillPaint, mTextPaint);
+                canvas.restore();
+                return;
+            }
+
+            if (mShape == Prefs.INDICATOR_SHAPE_STAR) {
+                // Shared drawer → identical to the on-screen indicator, scaled up by text size.
+                float textSizePx = 17 * dp;
+                float sw = IndicatorDrawing.starContentWidth(dp, textSizePx, mTextPaint);
+                float tw = IndicatorDrawing.starWidth(sw);
+                float th = IndicatorDrawing.starHeight(sw);
+                canvas.save();
+                canvas.translate(cx - tw / 2f, h / 2f - th / 2f);
+                IndicatorDrawing.drawStar(canvas, tw, th, 0,
+                        bgColor, alpha255, textCol, textSizePx,
+                        mShadow, dp, "75%", mFillPaint, mTextPaint);
+                canvas.restore();
+                return;
+            }
+
+            if (mShape == Prefs.INDICATOR_SHAPE_CIRCLE) {
+                // Shared drawer → identical to the on-screen indicator, scaled up by text size.
+                float textSizePx = 17 * dp;
+                float r  = IndicatorDrawing.bulbRadius(dp, textSizePx, mTextPaint);
+                float tw = IndicatorDrawing.dropletWidth(r);
+                canvas.save();
+                canvas.translate(cx - tw / 2f, h / 2f - tw / 2f);
+                IndicatorDrawing.drawCircle(canvas, tw, tw, 0,
                         bgColor, alpha255, textCol, textSizePx,
                         mShadow, dp, "75%", mFillPaint, mTextPaint);
                 canvas.restore();

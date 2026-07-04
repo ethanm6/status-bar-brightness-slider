@@ -119,7 +119,7 @@ public class SettingsActivity extends AppCompatActivity {
                     "Swipe left to dim, right to brighten",
                     Prefs.KEY_GESTURE_ENABLED, Prefs.DEFAULT_GESTURE_ENABLED,
                     enabled -> {
-                        if (enabled) {
+                        if (enabled && !keepGestureOnAuto()) {
                             Prefs.setPref(this, Prefs.KEY_AUTO_BRIGHTNESS, 0);
                             if (mAutoSwitch != null) mAutoSwitch.setChecked(false);
                         }
@@ -129,8 +129,22 @@ public class SettingsActivity extends AppCompatActivity {
                     "Enable system auto-brightness and pause gesture control",
                     Prefs.KEY_AUTO_BRIGHTNESS, Prefs.DEFAULT_AUTO_BRIGHTNESS,
                     enabled -> {
+                        if (keepGestureOnAuto()) return;
                         Prefs.setPref(this, Prefs.KEY_GESTURE_ENABLED, enabled ? 0 : 1);
                         if (mGestureSwitch != null) mGestureSwitch.setChecked(!enabled);
+                    });
+            addDivider(card, dp);
+            addSwitch(card, dp, "Keep gesture with auto-brightness",
+                    "Swipes stay active while auto-brightness is on and nudge its level",
+                    Prefs.KEY_KEEP_GESTURE_ON_AUTO, Prefs.DEFAULT_KEEP_GESTURE_ON_AUTO,
+                    enabled -> {
+                        // Re-apply the invariant for the current auto state: keeping the
+                        // gesture revives it under auto; un-keeping pauses it again.
+                        boolean autoOn = Settings.Secure.getInt(getContentResolver(),
+                                Prefs.KEY_AUTO_BRIGHTNESS, Prefs.DEFAULT_AUTO_BRIGHTNESS) == 1;
+                        if (!autoOn) return;
+                        Prefs.setPref(this, Prefs.KEY_GESTURE_ENABLED, enabled ? 1 : 0);
+                        if (mGestureSwitch != null) mGestureSwitch.setChecked(enabled);
                     });
         });
 
@@ -155,7 +169,7 @@ public class SettingsActivity extends AppCompatActivity {
             posSlider[0] = addSlider(card, dp, "Indicator vertical position",
                     "Distance from the top of the screen",
                     Prefs.KEY_INDICATOR_Y_POSITION, Prefs.DEFAULT_INDICATOR_Y_POSITION,
-                    0, Prefs.INDICATOR_Y_POSITION_MAX, "%", 1);
+                    0, Prefs.INDICATOR_Y_POSITION_MAX, "%", 1, false);
             addDivider(card, dp);
             addSwitch(card, dp, "Vibrate on gesture start",
                     "Brief haptic pulse when the swipe is recognised",
@@ -353,6 +367,15 @@ public class SettingsActivity extends AppCompatActivity {
                             String title, String desc,
                             String key, int defaultVal,
                             int min, int max, String unit, float stepSize) {
+        return addSlider(parent, dp, title, desc, key, defaultVal,
+                min, max, unit, stepSize, true);
+    }
+
+    private View addSlider(LinearLayout parent, float dp,
+                            String title, String desc,
+                            String key, int defaultVal,
+                            int min, int max, String unit, float stepSize,
+                            boolean showTicks) {
         LinearLayout col = new LinearLayout(this);
         col.setOrientation(LinearLayout.VERTICAL);
         col.setPadding((int)(16*dp), (int)(16*dp), (int)(16*dp), (int)(12*dp));
@@ -396,6 +419,7 @@ public class SettingsActivity extends AppCompatActivity {
         slider.setValueTo(max);
         slider.setValue(current);
         slider.setStepSize(stepSize);
+        slider.setTickVisible(showTicks);
         slider.setLabelFormatter(v -> (int) v + unit);
         slider.addOnChangeListener((s, value, fromUser) -> {
             if (fromUser) valueLabel.setText((int) value + unit);
@@ -421,6 +445,11 @@ public class SettingsActivity extends AppCompatActivity {
     // ── Prefs broadcast ───────────────────────────────────────────────────────
 
     private void sendPrefs() { Prefs.sendAll(this); }
+
+    private boolean keepGestureOnAuto() {
+        return Settings.Secure.getInt(getContentResolver(),
+                Prefs.KEY_KEEP_GESTURE_ON_AUTO, Prefs.DEFAULT_KEEP_GESTURE_ON_AUTO) == 1;
+    }
 
     private void syncSwitches() {
         if (mGestureSwitch != null)
