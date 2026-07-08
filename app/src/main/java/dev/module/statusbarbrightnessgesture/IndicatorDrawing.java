@@ -81,14 +81,8 @@ final class IndicatorDrawing {
         canvas.drawPath(path, fill);
     }
 
-    /**
-     * Draw a point-up droplet into the region [pad, pad, w-pad, h-pad] with the
-     * value text centred in the bulb. Caller supplies reusable Paints.
-     */
-    static void drawDroplet(Canvas canvas, float w, float h, float pad,
-                             int fillColor, int alpha255, int textColor, float textSizePx,
-                             boolean shadow, float density, String text,
-                             Paint fill, Paint textPaint) {
+    /** Build the point-up droplet outline for the region [pad, pad, w-pad, h-pad]. */
+    static Path buildDropletPath(float w, float h, float pad) {
         float left = pad, right = w - pad, top = pad, bottom = h - pad;
         float R  = (right - left) / 2f;    // bulb radius = half the content width
         float rt = R * DROPLET_TIP_FACTOR; // rounded tip radius
@@ -124,7 +118,25 @@ final class IndicatorDrawing {
         } else {
             path.addCircle(cx, cyB, R, Path.Direction.CW);
         }
+        return path;
+    }
 
+    /** Text-centre x for the droplet/circle/star (all centred horizontally). */
+    static float shapeTextCx(float w) { return w / 2f; }
+
+    /** Text-centre y for the droplet (bulb centre). */
+    static float dropletTextCy(float w, float h, float pad) {
+        return (h - pad) - (w - 2 * pad) / 2f;
+    }
+
+    /**
+     * Fill a prebuilt shape path and draw the value text centred on
+     * (textCx, textCy). Caller supplies reusable Paints.
+     */
+    static void drawShape(Canvas canvas, Path path, float textCx, float textCy,
+                          int fillColor, int alpha255, int textColor, float textSizePx,
+                          boolean shadow, float density, String text,
+                          Paint fill, Paint textPaint) {
         fillWithShadow(canvas, path, fill, fillColor, alpha255, shadow, density);
 
         textPaint.setColor(textColor);
@@ -132,34 +144,45 @@ final class IndicatorDrawing {
         textPaint.setTextSize(textSizePx);
         textPaint.setTypeface(Typeface.DEFAULT_BOLD);
         textPaint.setTextAlign(Paint.Align.CENTER);
-        canvas.drawText(text, cx,
-                cyB - (textPaint.descent() + textPaint.ascent()) / 2f, textPaint);
+        canvas.drawText(text, textCx,
+                textCy - (textPaint.descent() + textPaint.ascent()) / 2f, textPaint);
+    }
+
+    /**
+     * Draw a point-up droplet into the region [pad, pad, w-pad, h-pad] with the
+     * value text centred in the bulb. Caller supplies reusable Paints.
+     */
+    static void drawDroplet(Canvas canvas, float w, float h, float pad,
+                             int fillColor, int alpha255, int textColor, float textSizePx,
+                             boolean shadow, float density, String text,
+                             Paint fill, Paint textPaint) {
+        drawShape(canvas, buildDropletPath(w, h, pad),
+                shapeTextCx(w), dropletTextCy(w, h, pad),
+                fillColor, alpha255, textColor, textSizePx,
+                shadow, density, text, fill, textPaint);
+    }
+
+    /** Build the circle outline for the region [pad, pad, w-pad, h-pad].
+     *  Same bulb sizing as the droplet, so "100%" always fits. */
+    static Path buildCirclePath(float w, float h, float pad) {
+        float R = (w - 2 * pad) / 2f;
+        Path circle = new Path();
+        circle.addCircle(pad + R, h / 2f, R, Path.Direction.CW);
+        return circle;
     }
 
     /**
      * Draw a plain circle into the region [pad, pad, w-pad, h-pad] with the value
-     * text centred. Same bulb sizing as the droplet, so "100%" always fits.
+     * text centred. Caller supplies reusable Paints.
      */
     static void drawCircle(Canvas canvas, float w, float h, float pad,
                             int fillColor, int alpha255, int textColor, float textSizePx,
                             boolean shadow, float density, String text,
                             Paint fill, Paint textPaint) {
-        float left = pad, right = w - pad, top = pad, bottom = h - pad;
-        float R  = (right - left) / 2f;
-        float cx = left + R;
-        float cy = top + (bottom - top) / 2f;
-
-        Path circle = new Path();
-        circle.addCircle(cx, cy, R, Path.Direction.CW);
-        fillWithShadow(canvas, circle, fill, fillColor, alpha255, shadow, density);
-
-        textPaint.setColor(textColor);
-        textPaint.setAlpha(alpha255);
-        textPaint.setTextSize(textSizePx);
-        textPaint.setTypeface(Typeface.DEFAULT_BOLD);
-        textPaint.setTextAlign(Paint.Align.CENTER);
-        canvas.drawText(text, cx,
-                cy - (textPaint.descent() + textPaint.ascent()) / 2f, textPaint);
+        drawShape(canvas, buildCirclePath(w, h, pad),
+                shapeTextCx(w), h / 2f,
+                fillColor, alpha255, textColor, textSizePx,
+                shadow, density, text, fill, textPaint);
     }
 
     // Rounded five-point star, traced verbatim from the PT (Brazil) 2021 logo SVG
@@ -190,14 +213,13 @@ final class IndicatorDrawing {
     static int starWidth(float s)  { return Math.round(s); }
     static int starHeight(float s) { return Math.round(s * STAR_HEIGHT_FACTOR); }
 
-    /**
-     * Draw the rounded star into the region [pad, pad, w-pad, h-pad] with the
-     * value text centred on the star's circumcentre.
-     */
-    static void drawStar(Canvas canvas, float w, float h, float pad,
-                          int fillColor, int alpha255, int textColor, float textSizePx,
-                          boolean shadow, float density, String text,
-                          Paint fill, Paint textPaint) {
+    /** Text-centre y for the star (its circumcentre). */
+    static float starTextCy(float w, float pad) {
+        return pad + STAR_CENTER_Y * (w - 2 * pad);
+    }
+
+    /** Build the rounded-star outline for the region [pad, pad, w-pad, h-pad]. */
+    static Path buildStarPath(float w, float h, float pad) {
         float s = w - 2 * pad;   // content width; height is s × STAR_HEIGHT_FACTOR
         float ox = pad, oy = pad;
 
@@ -244,17 +266,21 @@ final class IndicatorDrawing {
                   ox + 0.53549f*s, oy + -0.01254f*s,
                   ox + 0.55179f*s, oy + 0.03763f*s);
         p.close();
+        return p;
+    }
 
-        fillWithShadow(canvas, p, fill, fillColor, alpha255, shadow, density);
-
-        textPaint.setColor(textColor);
-        textPaint.setAlpha(alpha255);
-        textPaint.setTextSize(textSizePx);
-        textPaint.setTypeface(Typeface.DEFAULT_BOLD);
-        textPaint.setTextAlign(Paint.Align.CENTER);
-        canvas.drawText(text, ox + 0.5f * s,
-                oy + STAR_CENTER_Y * s
-                        - (textPaint.descent() + textPaint.ascent()) / 2f, textPaint);
+    /**
+     * Draw the rounded star into the region [pad, pad, w-pad, h-pad] with the
+     * value text centred on the star's circumcentre.
+     */
+    static void drawStar(Canvas canvas, float w, float h, float pad,
+                          int fillColor, int alpha255, int textColor, float textSizePx,
+                          boolean shadow, float density, String text,
+                          Paint fill, Paint textPaint) {
+        drawShape(canvas, buildStarPath(w, h, pad),
+                shapeTextCx(w), starTextCy(w, pad),
+                fillColor, alpha255, textColor, textSizePx,
+                shadow, density, text, fill, textPaint);
     }
 
     /** Signed sweep (deg) from `from` to `to` that passes through `via`. */

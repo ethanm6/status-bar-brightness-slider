@@ -209,8 +209,6 @@ public class BrightnessGestureHook implements IXposedHookLoadPackage {
     private Object mInputMonitor;                      // android.view.InputMonitor (reflection)
     private android.view.InputEventReceiver mGestureReceiver;
     private Context mOverlayContext;                   // SystemUI context for InputManager access
-    private Runnable mPilferRunnable;                  // delayed pilfer to cut long-press-QS timer
-    private boolean mPilferPending = false;
 
     // ── Entry point ───────────────────────────────────────────────────────────
 
@@ -264,12 +262,17 @@ public class BrightnessGestureHook implements IXposedHookLoadPackage {
                 protected void beforeHookedMethod(MethodHookParam param) {
                     if (!(param.args[0] instanceof MotionEvent)) return;
                     MotionEvent ev = (MotionEvent) param.args[0];
-                    if (ev.getActionMasked() == MotionEvent.ACTION_DOWN) {
+                    boolean isDown = ev.getActionMasked() == MotionEvent.ACTION_DOWN;
+                    // No stream suppressed and none starting — skip the
+                    // getDownTime() JNI call (this monitor sees every touch event).
+                    if (!isDown && mBackSuppressDownTime == -1) return;
+                    long downTime = ev.getDownTime();
+                    if (isDown) {
                         boolean suppress = mGestureEnabled && mScreenHeight > 0
                                 && ev.getY() <= getBackSuppressBottom();
-                        mBackSuppressDownTime = suppress ? ev.getDownTime() : -1;
+                        mBackSuppressDownTime = suppress ? downTime : -1;
                     }
-                    if (ev.getDownTime() == mBackSuppressDownTime) {
+                    if (downTime == mBackSuppressDownTime) {
                         param.setResult(null);
                     }
                 }
@@ -318,6 +321,15 @@ public class BrightnessGestureHook implements IXposedHookLoadPackage {
                     try {
                         MotionEvent ev = (MotionEvent) param.args[0];
                         int action = ev.getActionMasked();
+                        // Nothing tracked or blinded and no new stream starting —
+                        // none of the checks below can match, so skip the
+                        // getDownTime() JNI calls. This is the state for nearly
+                        // every pointer event on the device.
+                        if (action != MotionEvent.ACTION_DOWN
+                                && mSysTrackDownTime == -1 && mSysBlindDownTime == -1) {
+                            return;
+                        }
+                        long downTime = ev.getDownTime();
                         if (action == MotionEvent.ACTION_DOWN) {
                             mSysBlindDownTime = -1;
                             mSysTrackDownTime = -1;
@@ -325,12 +337,12 @@ public class BrightnessGestureHook implements IXposedHookLoadPackage {
                                         == android.view.InputDevice.SOURCE_TOUCHSCREEN
                                     && ev.getY() <= sysSwipeStartTop(param.thisObject)
                                     && sysGestureEnabled(param.thisObject)) {
-                                mSysTrackDownTime = ev.getDownTime();
+                                mSysTrackDownTime = downTime;
                                 mSysDownX = ev.getX();
                                 mSysDownY = ev.getY();
                             }
                         } else if (action == MotionEvent.ACTION_MOVE
-                                && ev.getDownTime() == mSysTrackDownTime) {
+                                && downTime == mSysTrackDownTime) {
                             float dx = Math.abs(ev.getX() - mSysDownX);
                             float dy = Math.abs(ev.getY() - mSysDownY);
                             if (dx > mSysEarlySlopPx && dx > dy * mSysRatio) {
@@ -344,7 +356,7 @@ public class BrightnessGestureHook implements IXposedHookLoadPackage {
                                 mSysTrackDownTime = -1;
                             }
                         }
-                        if (ev.getDownTime() == mSysBlindDownTime) param.setResult(null);
+                        if (downTime == mSysBlindDownTime) param.setResult(null);
                     } catch (Throwable t) {
                         mSysTrackDownTime = -1;
                         mSysBlindDownTime = -1;
@@ -446,8 +458,7 @@ public class BrightnessGestureHook implements IXposedHookLoadPackage {
                 @Override
                 protected void afterHookedMethod(MethodHookParam param) {
                     try {
-                        Context ctx = (Context) param.thisObject.getClass()
-                                .getMethod("getContext").invoke(param.thisObject);
+                        Context ctx = ((android.view.View) param.thisObject).getContext();
                         if (ctx == null) return;
                         if (mStatusBarView == null) {
                             mStatusBarView = (android.view.View) param.thisObject;
@@ -671,8 +682,7 @@ public class BrightnessGestureHook implements IXposedHookLoadPackage {
                     if (ev == null) return;
                     if (mDisplayManager == null) {
                         try {
-                            Context ctx = (Context) param.thisObject.getClass()
-                                    .getMethod("getContext").invoke(param.thisObject);
+                            Context ctx = ((android.view.View) param.thisObject).getContext();
                             if (ctx != null) initDisplayResources(ctx);
                         } catch (Throwable t) {
                             XposedBridge.log(TAG + ": display init failed: " + t);
@@ -964,6 +974,10 @@ public class BrightnessGestureHook implements IXposedHookLoadPackage {
         private final float mTextSizePx, mDensity, mPad;
         private final boolean mShadow;
         private String mValue = "100%";
+        // The window is fixed-size, so the outline is built once and reused;
+        // only the text changes between redraws.
+        private android.graphics.Path mShapePath;
+        private float mTextCx, mTextCy;
 
         DropletView(Context c, int fill, int text, float textSizePx,
                      boolean shadow, float density, float pad, int shape) {
@@ -978,20 +992,29 @@ public class BrightnessGestureHook implements IXposedHookLoadPackage {
             invalidate();
         }
 
+        @Override protected void onSizeChanged(int w, int h, int oldw, int oldh) {
+            super.onSizeChanged(w, h, oldw, oldh);
+            mShapePath = null;
+        }
+
         @Override protected void onDraw(Canvas canvas) {
-            if (mShape == Prefs.INDICATOR_SHAPE_STAR) {
-                IndicatorDrawing.drawStar(canvas, getWidth(), getHeight(), mPad,
-                        mFillColor, 255, mTextColor, mTextSizePx,
-                        mShadow, mDensity, mValue, mFill, mText);
-            } else if (mShape == Prefs.INDICATOR_SHAPE_CIRCLE) {
-                IndicatorDrawing.drawCircle(canvas, getWidth(), getHeight(), mPad,
-                        mFillColor, 255, mTextColor, mTextSizePx,
-                        mShadow, mDensity, mValue, mFill, mText);
-            } else {
-                IndicatorDrawing.drawDroplet(canvas, getWidth(), getHeight(), mPad,
-                        mFillColor, 255, mTextColor, mTextSizePx,
-                        mShadow, mDensity, mValue, mFill, mText);
+            float w = getWidth(), h = getHeight();
+            if (mShapePath == null) {
+                mTextCx = IndicatorDrawing.shapeTextCx(w);
+                if (mShape == Prefs.INDICATOR_SHAPE_STAR) {
+                    mShapePath = IndicatorDrawing.buildStarPath(w, h, mPad);
+                    mTextCy = IndicatorDrawing.starTextCy(w, mPad);
+                } else if (mShape == Prefs.INDICATOR_SHAPE_CIRCLE) {
+                    mShapePath = IndicatorDrawing.buildCirclePath(w, h, mPad);
+                    mTextCy = h / 2f;
+                } else {
+                    mShapePath = IndicatorDrawing.buildDropletPath(w, h, mPad);
+                    mTextCy = IndicatorDrawing.dropletTextCy(w, h, mPad);
+                }
             }
+            IndicatorDrawing.drawShape(canvas, mShapePath, mTextCx, mTextCy,
+                    mFillColor, 255, mTextColor, mTextSizePx,
+                    mShadow, mDensity, mValue, mFill, mText);
         }
     }
 
@@ -1076,28 +1099,27 @@ public class BrightnessGestureHook implements IXposedHookLoadPackage {
     }
 
     private int getIndicatorColor(Context context) {
-        if (mIndicatorColorMode == Prefs.COLOR_MODE_ACCENT_LIGHT) {   // "Primary"
-            try { return context.getColor(isNightMode(context)
-                    ? android.R.color.system_neutral1_800 : android.R.color.system_neutral1_100); }
-            catch (Throwable ignored) { return resolveAccentColour(context); }
-        } else if (mIndicatorColorMode == Prefs.COLOR_MODE_ACCENT_DARK) {  // "Secondary" — app secondary role
-            try { return context.getColor(isNightMode(context)
-                    ? android.R.color.system_accent2_200 : android.R.color.system_accent2_600); }
-            catch (Throwable ignored) { return resolveAccentColour(context); }
-        } else if (mIndicatorColorMode == Prefs.COLOR_MODE_SECONDARY) {
-            try { return context.getColor(android.R.color.system_accent2_600); } catch (Throwable ignored) {}
-        } else if (mIndicatorColorMode == Prefs.COLOR_MODE_TERTIARY) {
-            try { return context.getColor(android.R.color.system_accent3_600); } catch (Throwable ignored) {}
-        } else if (mIndicatorColorMode == Prefs.COLOR_MODE_NEUTRAL) {
-            try { return context.getColor(android.R.color.system_neutral1_400); } catch (Throwable ignored) {}
-        } else if (mIndicatorColorMode == Prefs.COLOR_MODE_NEUTRAL_VAR) {
-            try { return context.getColor(android.R.color.system_neutral2_400); } catch (Throwable ignored) {}
-        } else if (mIndicatorColorMode == Prefs.COLOR_MODE_WHITE) {
-            return 0xFFFFFFFF;
-        } else if (mIndicatorColorMode == Prefs.COLOR_MODE_BLACK) {
-            return 0xFF1C1B1F;
-        } else if (mIndicatorColorMode == Prefs.COLOR_MODE_CUSTOM) {
-            return mIndicatorCustomColor;
+        switch (mIndicatorColorMode) {
+            case Prefs.COLOR_MODE_ACCENT_LIGHT:   // "Primary"
+                try { return context.getColor(isNightMode(context)
+                        ? android.R.color.system_neutral1_800 : android.R.color.system_neutral1_100); }
+                catch (Throwable ignored) { return resolveAccentColour(context); }
+            case Prefs.COLOR_MODE_ACCENT_DARK:    // "Secondary" — app secondary role
+                try { return context.getColor(isNightMode(context)
+                        ? android.R.color.system_accent2_200 : android.R.color.system_accent2_600); }
+                catch (Throwable ignored) { return resolveAccentColour(context); }
+            case Prefs.COLOR_MODE_SECONDARY:
+                try { return context.getColor(android.R.color.system_accent2_600); } catch (Throwable ignored) { break; }
+            case Prefs.COLOR_MODE_TERTIARY:
+                try { return context.getColor(android.R.color.system_accent3_600); } catch (Throwable ignored) { break; }
+            case Prefs.COLOR_MODE_NEUTRAL:
+                try { return context.getColor(android.R.color.system_neutral1_400); } catch (Throwable ignored) { break; }
+            case Prefs.COLOR_MODE_NEUTRAL_VAR:
+                try { return context.getColor(android.R.color.system_neutral2_400); } catch (Throwable ignored) { break; }
+            case Prefs.COLOR_MODE_WHITE:  return 0xFFFFFFFF;
+            case Prefs.COLOR_MODE_BLACK:  return 0xFF1C1B1F;
+            case Prefs.COLOR_MODE_CUSTOM: return mIndicatorCustomColor;
+            default: break;
         }
         // "Main" (and default) — the reported slider inactive tick colour, per theme.
         return (isNightMode(context) ? mMainDark : mMainLight) | 0xFF000000;
@@ -1122,12 +1144,9 @@ public class BrightnessGestureHook implements IXposedHookLoadPackage {
 
         mMainHandler.removeCallbacks(mDismissIndicator);
 
-        // Fraction is the same value used to compute brightness and the % label,
-        // so the pill's position is always 1-to-1 with the brightness value.
-        float usable = mScreenWidth - 2f * mEdgePaddingPx;
-        float fraction = usable <= 0
-                ? Math.max(0f, Math.min(1f, fingerX / mScreenWidth))
-                : Math.max(0f, Math.min(1f, (fingerX - mEdgePaddingPx) / usable));
+        // Same fraction as the brightness computation, so the pill's position is
+        // always 1-to-1 with the brightness value.
+        float fraction = positionFraction(fingerX);
         // The pill tracks the finger (position fraction), but the % label shows the
         // brightness value — which is the mirrored fraction when the slider is reversed.
         int pct = Math.round((mReverseSlider ? 1f - fraction : fraction) * 100f);
@@ -1136,7 +1155,7 @@ public class BrightnessGestureHook implements IXposedHookLoadPackage {
         // The pill arrives at its endpoints exactly when brightness reaches 0 / 100%
         // — no secondary snap from a disconnected pixel clamp.
         // Clamp so the PILL (not the shadow-padded window) stops at the screen edges.
-        float centerX = mEdgePaddingPx + fraction * usable;
+        float centerX = mEdgePaddingPx + fraction * (mScreenWidth - 2f * mEdgePaddingPx);
         int xOffset = Math.max(-mIndicatorShadowPad,
                 Math.min(mScreenWidth - mIndicatorW + mIndicatorShadowPad,
                         Math.round(centerX - mIndicatorW / 2f)));
@@ -1455,12 +1474,19 @@ public class BrightnessGestureHook implements IXposedHookLoadPackage {
 
     // ── Brightness computation ────────────────────────────────────────────────
 
-    private float computeBrightness(float fingerX) {
-        if (mBrightnessMin < 0) readBrightnessRange();
+    /** Finger x → clamped position fraction [0,1] within the edge-padded slider
+     *  range. Shared by the brightness computation and the indicator so the
+     *  pill's position is always exactly 1-to-1 with the brightness value. */
+    private float positionFraction(float fingerX) {
         float usable = mScreenWidth - 2f * mEdgePaddingPx;
-        float fraction = usable <= 0
+        return usable <= 0
                 ? Math.max(0f, Math.min(1f, fingerX / mScreenWidth))
                 : Math.max(0f, Math.min(1f, (fingerX - mEdgePaddingPx) / usable));
+    }
+
+    private float computeBrightness(float fingerX) {
+        if (mBrightnessMin < 0) readBrightnessRange();
+        float fraction = positionFraction(fingerX);
         // Reversed slider: 100% on the left, 0% on the right.
         if (mReverseSlider) fraction = 1f - fraction;
         // The curve exponent shapes the finger position in slider-position (gamma)
@@ -1588,6 +1614,11 @@ public class BrightnessGestureHook implements IXposedHookLoadPackage {
                     mInputMonitor.getClass().getMethod("getInputChannel").invoke(mInputMonitor);
 
             final Object monitor = mInputMonitor;
+            // Looked up once here rather than reflectively on every gesture activation.
+            Method pilferLookup = null;
+            try { pilferLookup = mInputMonitor.getClass().getMethod("pilferPointers"); }
+            catch (Throwable pt) { XposedBridge.log(TAG + ": pilfer lookup failed: " + pt); }
+            final Method pilferMethod = pilferLookup;
             mGestureReceiver = new android.view.InputEventReceiver(
                     channel, mMainHandler.getLooper()) {
                 @Override
@@ -1613,11 +1644,9 @@ public class BrightnessGestureHook implements IXposedHookLoadPackage {
                                 boolean wasActive = mGestureActive;
                                 handleTouchEvent(me, true);
 
-                                if (!wasActive && mGestureActive) {
+                                if (!wasActive && mGestureActive && pilferMethod != null) {
                                     try {
-                                        monitor.getClass()
-                                                .getMethod("pilferPointers")
-                                                .invoke(monitor);
+                                        pilferMethod.invoke(monitor);
                                     } catch (Throwable pt) {
                                         XposedBridge.log(TAG + ": pilfer failed: " + pt);
                                     }
