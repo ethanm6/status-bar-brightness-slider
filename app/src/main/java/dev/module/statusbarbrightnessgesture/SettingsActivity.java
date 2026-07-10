@@ -32,7 +32,9 @@ import android.util.TypedValue;
 import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
+import android.widget.ImageButton;
 import android.widget.LinearLayout;
+import android.widget.PopupMenu;
 import android.widget.TextView;
 
 import androidx.annotation.NonNull;
@@ -91,13 +93,43 @@ public class SettingsActivity extends AppCompatActivity {
         hero.setOrientation(LinearLayout.VERTICAL);
         hero.setPadding((int)(24*dp), (int)(24*dp), (int)(24*dp), (int)(8*dp));
 
+        LinearLayout titleRow = new LinearLayout(this);
+        titleRow.setOrientation(LinearLayout.HORIZONTAL);
+
         TextView title = new TextView(this);
         title.setText("Brightness\nSlider");
         title.setTextSize(TypedValue.COMPLEX_UNIT_SP, 40);
         title.setTextColor(colOnSurface);
         title.setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL));
         title.setLineSpacing(0, 1.05f);
-        hero.addView(title);
+        titleRow.addView(title, new LinearLayout.LayoutParams(
+                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+
+        ImageButton menuBtn = new ImageButton(this);
+        menuBtn.setImageResource(R.drawable.ic_more_vert);
+        menuBtn.setColorFilter(colOnSurfaceVariant);
+        menuBtn.setContentDescription("More options");
+        TypedValue ripple = new TypedValue();
+        getTheme().resolveAttribute(
+                android.R.attr.selectableItemBackgroundBorderless, ripple, true);
+        menuBtn.setBackgroundResource(ripple.resourceId);
+        menuBtn.setOnClickListener(v -> {
+            PopupMenu menu = new PopupMenu(this, v);
+            menu.getMenu().add(0, 1, 0, "GitHub repository");
+            menu.getMenu().add(0, 2, 1, "Support on Ko-fi");
+            menu.setOnMenuItemClickListener(item -> {
+                String url = item.getItemId() == 1
+                        ? "https://github.com/ethanm6/status-bar-brightness-slider"
+                        : "https://ko-fi.com/ethanm6";
+                startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(url)));
+                return true;
+            });
+            menu.show();
+        });
+        titleRow.addView(menuBtn, new LinearLayout.LayoutParams(
+                (int)(48*dp), (int)(48*dp)));
+
+        hero.addView(titleRow, matchWidth());
 
         TextView subtitle = new TextView(this);
         subtitle.setText("Swipe horizontally on the status bar to adjust brightness");
