@@ -44,7 +44,6 @@ import androidx.core.view.WindowCompat;
 import androidx.core.view.WindowInsetsCompat;
 import androidx.core.widget.NestedScrollView;
 
-import com.google.android.material.card.MaterialCardView;
 import com.google.android.material.color.DynamicColors;
 import com.google.android.material.materialswitch.MaterialSwitch;
 import com.google.android.material.slider.Slider;
@@ -56,7 +55,6 @@ public class SettingsActivity extends AppCompatActivity {
     private int colOnSurface;
     private int colOnSurfaceVariant;
     private int colPrimary;
-    private int colOutlineVariant;
 
     private MaterialSwitch mGestureSwitch;
     private MaterialSwitch mAutoSwitch;
@@ -155,18 +153,14 @@ public class SettingsActivity extends AppCompatActivity {
                             Prefs.setPref(this, Prefs.KEY_AUTO_BRIGHTNESS, 0);
                             if (mAutoSwitch != null) mAutoSwitch.setChecked(false);
                         }
-                    });
-            addDivider(card, dp);
-            mAutoSwitch = addSwitch(card, dp, "Auto brightness mode",
+                    });            mAutoSwitch = addSwitch(card, dp, "Auto brightness mode",
                     "Enable system auto-brightness and pause gesture control",
                     Prefs.KEY_AUTO_BRIGHTNESS, Prefs.DEFAULT_AUTO_BRIGHTNESS,
                     enabled -> {
                         if (keepGestureOnAuto()) return;
                         Prefs.setPref(this, Prefs.KEY_GESTURE_ENABLED, enabled ? 0 : 1);
                         if (mGestureSwitch != null) mGestureSwitch.setChecked(!enabled);
-                    });
-            addDivider(card, dp);
-            addSwitch(card, dp, "Keep gesture with auto-brightness",
+                    });            addSwitch(card, dp, "Keep gesture with auto-brightness",
                     "Swipes stay active while auto-brightness is on and nudge its level",
                     Prefs.KEY_KEEP_GESTURE_ON_AUTO, Prefs.DEFAULT_KEEP_GESTURE_ON_AUTO,
                     enabled -> {
@@ -193,17 +187,11 @@ public class SettingsActivity extends AppCompatActivity {
                     enabled -> {
                         setNavRowEnabled(appearanceRow[0], enabled);
                         setNavRowEnabled(posSlider[0], enabled);
-                    });
-            addDivider(card, dp);
-            appearanceRow[0] = addNavRow(card, dp, "Indicator appearance", "Shape and color",
-                    () -> startActivity(new Intent(this, IndicatorAppearanceActivity.class)));
-            addDivider(card, dp);
-            posSlider[0] = addSlider(card, dp, "Indicator vertical position",
+                    });            appearanceRow[0] = addNavRow(card, dp, "Indicator appearance", "Shape and color",
+                    () -> startActivity(new Intent(this, IndicatorAppearanceActivity.class)));            posSlider[0] = addSlider(card, dp, "Indicator vertical position",
                     "Distance from the top of the screen",
                     Prefs.KEY_INDICATOR_Y_POSITION, Prefs.DEFAULT_INDICATOR_Y_POSITION,
-                    0, Prefs.INDICATOR_Y_POSITION_MAX, "%", 1, false);
-            addDivider(card, dp);
-            addSwitch(card, dp, "Vibrate on gesture start",
+                    0, Prefs.INDICATOR_Y_POSITION_MAX, "%", 1, false);            addSwitch(card, dp, "Vibrate on gesture start",
                     "Brief haptic pulse when the swipe is recognised",
                     Prefs.KEY_HAPTIC_FEEDBACK, Prefs.DEFAULT_HAPTIC_FEEDBACK);
         });
@@ -216,9 +204,7 @@ public class SettingsActivity extends AppCompatActivity {
             addSlider(card, dp, "Activation sensitivity",
                     "Higher = shorter swipe needed; lower = less likely to fire when pulling the shade",
                     Prefs.KEY_SENSITIVITY, Prefs.DEFAULT_SENSITIVITY,
-                    Prefs.SENSITIVITY_MIN, Prefs.SENSITIVITY_MAX, "", 1);
-            addDivider(card, dp);
-            addSlider(card, dp, "Rounded-corner padding",
+                    Prefs.SENSITIVITY_MIN, Prefs.SENSITIVITY_MAX, "", 1);            addSlider(card, dp, "Rounded-corner padding",
                     "Insets the range so 0% and 100% are reachable without reaching the curved screen edges",
                     Prefs.KEY_EDGE_PADDING_DP, Prefs.DEFAULT_EDGE_PADDING_DP,
                     0, Prefs.EDGE_PADDING_MAX_DP, " dp", 0);
@@ -229,17 +215,11 @@ public class SettingsActivity extends AppCompatActivity {
         buildCard(content, dp, card -> {
             addSwitch(card, dp, "Block long-press Quick Settings",
                     "Prevents holding the status bar from opening Quick Settings",
-                    Prefs.KEY_BLOCK_LONGPRESS_QS, Prefs.DEFAULT_BLOCK_LONGPRESS_QS);
-            addDivider(card, dp);
-            addSwitch(card, dp, "Fullscreen swipe",
+                    Prefs.KEY_BLOCK_LONGPRESS_QS, Prefs.DEFAULT_BLOCK_LONGPRESS_QS);            addSwitch(card, dp, "Fullscreen swipe",
                     "Adjust brightness at the top of the screen in fullscreen apps",
-                    Prefs.KEY_FULLSCREEN_SWIPE, Prefs.DEFAULT_FULLSCREEN_SWIPE);
-            addDivider(card, dp);
-            addSwitch(card, dp, "Reverse direction",
+                    Prefs.KEY_FULLSCREEN_SWIPE, Prefs.DEFAULT_FULLSCREEN_SWIPE);            addSwitch(card, dp, "Reverse direction",
                     "0% on the right, 100% on the left",
-                    Prefs.KEY_REVERSE_SLIDER, Prefs.DEFAULT_REVERSE_SLIDER);
-            addDivider(card, dp);
-            addCurveSlider(card, dp);
+                    Prefs.KEY_REVERSE_SLIDER, Prefs.DEFAULT_REVERSE_SLIDER);            addCurveSlider(card, dp);
         });
 
         // Footer
@@ -570,13 +550,6 @@ public class SettingsActivity extends AppCompatActivity {
         parent.addView(col, matchWidth());
     }
 
-    // ── In-card divider ───────────────────────────────────────────────────────
-
-    private void addDivider(LinearLayout parent, float dp) {
-        // No-op: segmented groups (buildCard) separate rows with gaps, matching
-        // the Android 16 Settings look — divider lines are no longer drawn.
-    }
-
     // ── Prefs broadcast ───────────────────────────────────────────────────────
 
     private void sendPrefs() { Prefs.sendAll(this); }
@@ -641,8 +614,6 @@ public class SettingsActivity extends AppCompatActivity {
                                         night ? 0xFFCAC4D0 : 0xFF49454F));
         colPrimary          = resolveColor(android.R.attr.colorPrimary,
                                 night ? 0xFFD0BCFF : 0xFF6650A4);
-        colOutlineVariant   = resolveColor(com.google.android.material.R.attr.colorOutlineVariant,
-                                night ? 0xFF49454F : 0xFFCAC4D0);
     }
 
     private int resolveColor(int attr, int fallback) {

@@ -58,13 +58,13 @@ import de.robv.android.xposed.callbacks.XC_LoadPackage;
  * Hooking: findHookMethod() reflects into XposedBridge at runtime to bypass
  * LSPosed's obfuscation of hookMethod().
  *
- * Prefs: broadcast approach.
- *   - SettingsActivity writes to SharedPreferences and sends a targeted
- *     broadcast to com.android.systemui with the new values as extras.
- *   - Hook registers a BroadcastReceiver inside SystemUI from onAttachedToWindow —
+ * Prefs: values live in Settings.Secure, with this hook as the sole writer.
+ *   - The app broadcasts one ACTION_SET_PREF per change; the receiver here
+ *     persists it (SystemUI holds WRITE_SECURE_SETTINGS, the app has no grant)
+ *     and re-applies the full set.
+ *   - The receiver is registered inside SystemUI from onAttachedToWindow —
  *     guaranteed safe timing, no race condition.
- *   - SettingsActivity also re-sends on onResume() so values survive SystemUI restarts.
- *   - No permissions needed.
+ *   - Activities nudge a full reload via ACTION_PREFS_CHANGED on onResume().
  */
 @SuppressWarnings({"JavaReflectionMemberAccess", "ConstantConditions"})
 public class BrightnessGestureHook implements IXposedHookLoadPackage {
@@ -96,6 +96,7 @@ public class BrightnessGestureHook implements IXposedHookLoadPackage {
 
     private float mDownX;
     private float mDownY;
+    private float mLastMoveX;   // last finger x processed by onMove during an active drag
     private float mLastTargetBrightness = -1f;
     private boolean mGestureActive = false;
     private boolean mTouchStartedInStatusBar = false;
@@ -125,9 +126,14 @@ public class BrightnessGestureHook implements IXposedHookLoadPackage {
     private float mBrightnessMax = 1.0f;
 
     private Method mSetTemporaryBrightnessMethod;
+    // Unreflected form: same per-MOVE no-boxing rationale as mConvertGammaToLinearHandle.
+    private java.lang.invoke.MethodHandle mSetTemporaryBrightnessHandle;
     private Method mSetBrightnessMethod;
     private Method mGetBrightnessInfoMethod;
     private Method mConvertGammaToLinearMethod;
+    // Unreflected form of the same method: invokeExact runs on every MOVE during a
+    // drag and, unlike Method.invoke, doesn't box its arguments per call.
+    private java.lang.invoke.MethodHandle mConvertGammaToLinearHandle;
 
     private Field mBrightnessMinField;
     private Field mBrightnessMaxField;
@@ -158,6 +164,7 @@ public class BrightnessGestureHook implements IXposedHookLoadPackage {
     private int mIndicatorW;
     private int mIndicatorH;
     private boolean mIndicatorAttached = false;
+    private int mLastShownPct = -1;             // % currently shown; skips label rebuilds
     private ValueAnimator mSlideInAnimator;
     private ValueAnimator mHideAnimator;
     private boolean mSlideInAnimating = false;
@@ -333,10 +340,14 @@ public class BrightnessGestureHook implements IXposedHookLoadPackage {
                         if (action == MotionEvent.ACTION_DOWN) {
                             mSysBlindDownTime = -1;
                             mSysTrackDownTime = -1;
-                            if ((ev.getSource() & android.view.InputDevice.SOURCE_TOUCHSCREEN)
+                            // Cheapest gate first: sysGestureEnabled is a cached
+                            // boolean (throttled re-read), so with the fullscreen
+                            // swipe disabled every DOWN skips the getSource()/getY()
+                            // JNI calls and the threshold-field reflection.
+                            if (sysGestureEnabled(param.thisObject)
+                                    && (ev.getSource() & android.view.InputDevice.SOURCE_TOUCHSCREEN)
                                         == android.view.InputDevice.SOURCE_TOUCHSCREEN
-                                    && ev.getY() <= sysSwipeStartTop(param.thisObject)
-                                    && sysGestureEnabled(param.thisObject)) {
+                                    && ev.getY() <= sysSwipeStartTop(param.thisObject)) {
                                 mSysTrackDownTime = downTime;
                                 mSysDownX = ev.getX();
                                 mSysDownY = ev.getY();
@@ -385,8 +396,9 @@ public class BrightnessGestureHook implements IXposedHookLoadPackage {
     }
 
     // Prefs gate + tuning for the system-side suppression, mirroring applyTuning().
-    // Re-read at most every 2s; DOWNs in the strip are infrequent and Settings reads
-    // are cached client-side, so this stays off the hot path.
+    // Checked first on every DOWN (cheapest gate); the prefs are re-read at most
+    // every 2s and Settings reads are cached client-side, so this stays off the
+    // hot path.
     private boolean sysGestureEnabled(Object listener) {
         long now = android.os.SystemClock.uptimeMillis();
         if (mSysPrefsReadAt < 0 || now - mSysPrefsReadAt > 2000) {
@@ -756,6 +768,10 @@ public class BrightnessGestureHook implements IXposedHookLoadPackage {
             mSetTemporaryBrightnessMethod = DisplayManager.class
                     .getDeclaredMethod("setTemporaryBrightness", int.class, float.class);
             mSetTemporaryBrightnessMethod.setAccessible(true);
+            try {
+                mSetTemporaryBrightnessHandle = java.lang.invoke.MethodHandles
+                        .lookup().unreflect(mSetTemporaryBrightnessMethod);
+            } catch (Throwable ignored) {}   // Method.invoke fallback still works
 
             mSetBrightnessMethod = DisplayManager.class
                     .getDeclaredMethod("setBrightness", int.class, float.class);
@@ -769,6 +785,10 @@ public class BrightnessGestureHook implements IXposedHookLoadPackage {
                         BRIGHTNESS_UTILS_CLASS, false, context.getClassLoader());
                 mConvertGammaToLinearMethod = bu.getMethod(
                         "convertGammaToLinearFloat", int.class, float.class, float.class);
+                try {
+                    mConvertGammaToLinearHandle = java.lang.invoke.MethodHandles
+                            .lookup().unreflect(mConvertGammaToLinearMethod);
+                } catch (Throwable ignored) {}   // Method.invoke fallback still works
                 XposedBridge.log(TAG + ": found BrightnessUtils.convertGammaToLinearFloat");
             } catch (Throwable t) {
                 XposedBridge.log(TAG + ": BrightnessUtils not found, using HLG fallback");
@@ -833,6 +853,7 @@ public class BrightnessGestureHook implements IXposedHookLoadPackage {
 
             mIndicatorTextView = null;
             mDropletView = null;
+            mLastShownPct = -1;   // fresh views start at their default "100%" label
             if (mIndicatorShape == Prefs.INDICATOR_SHAPE_PILL) {
                 initIndicatorPill(context, accent, textCol, d);
             } else {
@@ -898,23 +919,39 @@ public class BrightnessGestureHook implements IXposedHookLoadPackage {
             final float blur = 8 * d, dy = 3 * d;
             final int pillColor = accent;
             android.widget.FrameLayout wrap = new android.widget.FrameLayout(context) {
-                private final android.graphics.Paint mShadowPaint =
-                        new android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG);
+                // The shadowed rect is static — only the pill text changes — so it
+                // is baked into a bitmap once. Re-rendering it live would re-blur
+                // the shadow through a software layer on every percent change.
+                private android.graphics.Bitmap mShadowBitmap;
+                @Override protected void onSizeChanged(int w, int h, int oldw, int oldh) {
+                    super.onSizeChanged(w, h, oldw, oldh);
+                    mShadowBitmap = null;
+                }
                 @Override
                 protected void onDraw(android.graphics.Canvas canvas) {
                     super.onDraw(canvas);
-                    float l = pad, t = pad;
-                    float r = getWidth() - pad, b = getHeight() - pad;
-                    float rad = (b - t) / 2f;
-                    // Same fill color as the pill so anti-aliased edges blend;
-                    // the TextView's own background draws on top of this rect.
-                    mShadowPaint.setColor(pillColor);
-                    mShadowPaint.setShadowLayer(blur, 0, dy, 0x66000000);
-                    canvas.drawRoundRect(l, t, r, b, rad, rad, mShadowPaint);
+                    if (getWidth() <= 0 || getHeight() <= 0) return;
+                    if (mShadowBitmap == null) {
+                        mShadowBitmap = android.graphics.Bitmap.createBitmap(
+                                getWidth(), getHeight(),
+                                android.graphics.Bitmap.Config.ARGB_8888);
+                        android.graphics.Canvas c =
+                                new android.graphics.Canvas(mShadowBitmap);
+                        android.graphics.Paint p = new android.graphics.Paint(
+                                android.graphics.Paint.ANTI_ALIAS_FLAG);
+                        float l = pad, t = pad;
+                        float r = getWidth() - pad, b = getHeight() - pad;
+                        float rad = (b - t) / 2f;
+                        // Same fill color as the pill so anti-aliased edges blend;
+                        // the TextView's own background draws on top of this rect.
+                        p.setColor(pillColor);
+                        p.setShadowLayer(blur, 0, dy, 0x66000000);
+                        c.drawRoundRect(l, t, r, b, rad, rad, p);
+                    }
+                    canvas.drawBitmap(mShadowBitmap, 0, 0, null);
                 }
             };
             wrap.setWillNotDraw(false);
-            wrap.setLayerType(android.view.View.LAYER_TYPE_SOFTWARE, null);
             wrap.setClipChildren(false);
             wrap.setClipToPadding(false);
             wrap.setPadding(pad, pad, pad, pad);
@@ -959,9 +996,6 @@ public class BrightnessGestureHook implements IXposedHookLoadPackage {
 
         DropletView view = new DropletView(context, accent, textCol, textSizePx,
                 mIndicatorShadow, d, pad, shape);
-        if (mIndicatorShadow) {
-            view.setLayerType(android.view.View.LAYER_TYPE_SOFTWARE, null);
-        }
         mDropletView = view;
         mIndicatorView = view;
     }
@@ -974,9 +1008,10 @@ public class BrightnessGestureHook implements IXposedHookLoadPackage {
         private final float mTextSizePx, mDensity, mPad;
         private final boolean mShadow;
         private String mValue = "100%";
-        // The window is fixed-size, so the outline is built once and reused;
-        // only the text changes between redraws.
-        private android.graphics.Path mShapePath;
+        // The window is fixed-size, so the filled outline — including the shadow,
+        // whose blur is the expensive part — is baked into a bitmap once; each
+        // redraw is then a blit plus the text, with no software layer needed.
+        private android.graphics.Bitmap mShapeBitmap;
         private float mTextCx, mTextCy;
 
         DropletView(Context c, int fill, int text, float textSizePx,
@@ -994,27 +1029,33 @@ public class BrightnessGestureHook implements IXposedHookLoadPackage {
 
         @Override protected void onSizeChanged(int w, int h, int oldw, int oldh) {
             super.onSizeChanged(w, h, oldw, oldh);
-            mShapePath = null;
+            mShapeBitmap = null;
         }
 
         @Override protected void onDraw(Canvas canvas) {
             float w = getWidth(), h = getHeight();
-            if (mShapePath == null) {
+            if (w <= 0 || h <= 0) return;
+            if (mShapeBitmap == null) {
                 mTextCx = IndicatorDrawing.shapeTextCx(w);
+                android.graphics.Path path;
                 if (mShape == Prefs.INDICATOR_SHAPE_STAR) {
-                    mShapePath = IndicatorDrawing.buildStarPath(w, h, mPad);
+                    path = IndicatorDrawing.buildStarPath(w, h, mPad);
                     mTextCy = IndicatorDrawing.starTextCy(w, mPad);
                 } else if (mShape == Prefs.INDICATOR_SHAPE_CIRCLE) {
-                    mShapePath = IndicatorDrawing.buildCirclePath(w, h, mPad);
+                    path = IndicatorDrawing.buildCirclePath(w, h, mPad);
                     mTextCy = h / 2f;
                 } else {
-                    mShapePath = IndicatorDrawing.buildDropletPath(w, h, mPad);
+                    path = IndicatorDrawing.buildDropletPath(w, h, mPad);
                     mTextCy = IndicatorDrawing.dropletTextCy(w, h, mPad);
                 }
+                mShapeBitmap = android.graphics.Bitmap.createBitmap(
+                        (int) w, (int) h, android.graphics.Bitmap.Config.ARGB_8888);
+                IndicatorDrawing.fillShape(new Canvas(mShapeBitmap), path,
+                        mFillColor, 255, mShadow, mDensity, mFill);
             }
-            IndicatorDrawing.drawShape(canvas, mShapePath, mTextCx, mTextCy,
-                    mFillColor, 255, mTextColor, mTextSizePx,
-                    mShadow, mDensity, mValue, mFill, mText);
+            canvas.drawBitmap(mShapeBitmap, 0, 0, null);
+            IndicatorDrawing.drawValueText(canvas, mTextCx, mTextCy,
+                    mTextColor, 255, mTextSizePx, mValue, mText);
         }
     }
 
@@ -1168,7 +1209,10 @@ public class BrightnessGestureHook implements IXposedHookLoadPackage {
         mIndicatorParams.x = xOffset;
 
         try {
-            setIndicatorValue(pct + "%");
+            if (pct != mLastShownPct) {
+                setIndicatorValue(pct + "%");
+                mLastShownPct = pct;
+            }
             float targetAlpha = mIndicatorAlpha / 100f;
             if (!mIndicatorAttached) {
                 if (mHideAnimator != null) { mHideAnimator.cancel(); mHideAnimator = null; }
@@ -1207,18 +1251,6 @@ public class BrightnessGestureHook implements IXposedHookLoadPackage {
             }
         } catch (Throwable t) {
             XposedBridge.log(TAG + ": showIndicator failed: " + t);
-        }
-    }
-
-    /** Damped-spring interpolator: overshoots then oscillates to a settle (springy bounce). */
-    private static final class SpringInterpolator implements android.animation.TimeInterpolator {
-        private final double freq, decay;
-        SpringInterpolator(double oscillations, double decay) {
-            this.freq = 2 * Math.PI * oscillations;
-            this.decay = decay;
-        }
-        @Override public float getInterpolation(float t) {
-            return (float) (1 - Math.exp(-decay * t) * Math.cos(freq * t));
         }
     }
 
@@ -1391,9 +1423,10 @@ public class BrightnessGestureHook implements IXposedHookLoadPackage {
 
     private boolean onMove(MotionEvent ev) {
         if (!mTouchStartedInStatusBar) return false;
-        float absDX = Math.abs(ev.getX() - mDownX);
-        float absDY = Math.abs(ev.getY() - mDownY);
+        float x = ev.getX();
         if (!mGestureActive) {
+            float absDX = Math.abs(x - mDownX);
+            float absDY = Math.abs(ev.getY() - mDownY);
             // Clearly vertical → this is an intentional QS swipe; let the shade open.
             if (mSuppressShadeExpand && absDY > mGestureSlopPx && absDY > absDX) {
                 mSuppressShadeExpand = false;
@@ -1407,9 +1440,16 @@ public class BrightnessGestureHook implements IXposedHookLoadPackage {
                 mStatusBarView.performHapticFeedback(
                         android.view.HapticFeedbackConstants.GESTURE_START);
             }
+        } else if (x == mLastMoveX) {
+            // Vertical jitter: brightness and the indicator both depend only on x,
+            // so re-deriving them (reflective gamma call, label string) is waste.
+            // The activation MOVE never takes this branch, so mLastMoveX can't be
+            // stale from a previous gesture.
+            return true;
         }
-        setTemporaryBrightness(computeBrightness(ev.getX()));
-        showIndicator(ev.getX());
+        mLastMoveX = x;
+        setTemporaryBrightness(computeBrightness(x));
+        showIndicator(x);
         return true;
     }
 
@@ -1503,10 +1543,17 @@ public class BrightnessGestureHook implements IXposedHookLoadPackage {
     /** System slider position [0,1] → linear brightness float, via the ROM's own
      *  BrightnessUtils when available, else the AOSP HLG formula it's built on. */
     private float gammaPositionToLinear(float pos) {
+        int gamma = Math.round(pos * GAMMA_SPACE_MAX);
+        if (mConvertGammaToLinearHandle != null) {
+            try {
+                return (float) mConvertGammaToLinearHandle.invokeExact(
+                        gamma, mBrightnessMin, mBrightnessMax);
+            } catch (Throwable ignored) {}
+        }
         if (mConvertGammaToLinearMethod != null) {
             try {
                 return (float) mConvertGammaToLinearMethod.invoke(null,
-                        Math.round(pos * GAMMA_SPACE_MAX), mBrightnessMin, mBrightnessMax);
+                        gamma, mBrightnessMin, mBrightnessMax);
             } catch (Throwable ignored) {}
         }
         float ret = pos <= HLG_R
@@ -1521,6 +1568,14 @@ public class BrightnessGestureHook implements IXposedHookLoadPackage {
     private void setTemporaryBrightness(float brightness) {
         if (mSetTemporaryBrightnessMethod == null) return;
         if (brightness == mLastTargetBrightness) return;  // no-op — skip the binder call
+        if (mSetTemporaryBrightnessHandle != null) {
+            try {
+                mSetTemporaryBrightnessHandle.invokeExact(
+                        mDisplayManager, Display.DEFAULT_DISPLAY, brightness);
+                mLastTargetBrightness = brightness;
+                return;
+            } catch (Throwable ignored) {}   // fall through to Method.invoke
+        }
         try { mSetTemporaryBrightnessMethod.invoke(
                 mDisplayManager, Display.DEFAULT_DISPLAY, brightness); }
         catch (Throwable t) { XposedBridge.log(TAG + ": setTemporaryBrightness: " + t); }
@@ -1630,17 +1685,20 @@ public class BrightnessGestureHook implements IXposedHookLoadPackage {
                         // double-handle shared gesture state and interfere with taps reaching
                         // the app below. So stay completely dormant unless the bar is hidden.
                         if (event instanceof MotionEvent && mGestureEnabled
-                                && mFullscreenSwipe && isStatusBarHidden()
-                                // Peek mode: the transient status bar window owns this
-                                // stream — the SBV hook handles it; pilfering here would
-                                // CANCEL that stream and kill the gesture.
-                                && ((MotionEvent) event).getDownTime() != mSbvStreamDownTime) {
+                                && mFullscreenSwipe && isStatusBarHidden()) {
                             MotionEvent me = (MotionEvent) event;
                             int action = me.getActionMasked();
+                            // Strip test before the downTime guard: for nearly every
+                            // event seen here (fullscreen touches whose stream never
+                            // started in the strip) this skips the getDownTime() JNI
+                            // call, like the early-outs in the other per-event hooks.
                             boolean inStrip = (action == MotionEvent.ACTION_DOWN)
                                     ? me.getY() <= getStripHeight()
                                     : mTouchStartedInStatusBar;
-                            if (inStrip) {
+                            // Peek mode: the transient status bar window owns this
+                            // stream — the SBV hook handles it; pilfering here would
+                            // CANCEL that stream and kill the gesture.
+                            if (inStrip && me.getDownTime() != mSbvStreamDownTime) {
                                 boolean wasActive = mGestureActive;
                                 handleTouchEvent(me, true);
 

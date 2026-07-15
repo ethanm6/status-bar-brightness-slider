@@ -484,8 +484,16 @@ public class IndicatorAppearanceActivity extends AppCompatActivity {
             if (!fromUser) return;
             mAlpha = (int) value;
             mAlphaValueLabel.setText(mAlpha + "%");
-            Prefs.setPref(this, Prefs.KEY_INDICATOR_ALPHA, mAlpha);
             invalidatePreviews();
+        });
+        // Commit on release only: every setPref is a broadcast round-trip into
+        // SystemUI (Settings write + full pref reload), too heavy per tick.
+        slider.addOnSliderTouchListener(new Slider.OnSliderTouchListener() {
+            @Override public void onStartTrackingTouch(@NonNull Slider s) {}
+            @Override public void onStopTrackingTouch(@NonNull Slider s) {
+                Prefs.setPref(IndicatorAppearanceActivity.this,
+                        Prefs.KEY_INDICATOR_ALPHA, mAlpha);
+            }
         });
         inner.addView(slider, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));

@@ -130,15 +130,19 @@ final class IndicatorDrawing {
     }
 
     /**
-     * Fill a prebuilt shape path and draw the value text centred on
-     * (textCx, textCy). Caller supplies reusable Paints.
+     * Fill a prebuilt shape path with optional shadow — the static part of the
+     * indicator, so it can be baked into a bitmap and blitted on later redraws
+     * (the shadow blur is by far the most expensive draw operation here).
      */
-    static void drawShape(Canvas canvas, Path path, float textCx, float textCy,
-                          int fillColor, int alpha255, int textColor, float textSizePx,
-                          boolean shadow, float density, String text,
-                          Paint fill, Paint textPaint) {
+    static void fillShape(Canvas canvas, Path path, int fillColor, int alpha255,
+                          boolean shadow, float density, Paint fill) {
         fillWithShadow(canvas, path, fill, fillColor, alpha255, shadow, density);
+    }
 
+    /** Draw the value text centred on (textCx, textCy). Caller supplies the Paint. */
+    static void drawValueText(Canvas canvas, float textCx, float textCy,
+                              int textColor, int alpha255, float textSizePx,
+                              String text, Paint textPaint) {
         textPaint.setColor(textColor);
         textPaint.setAlpha(alpha255);
         textPaint.setTextSize(textSizePx);
@@ -146,6 +150,19 @@ final class IndicatorDrawing {
         textPaint.setTextAlign(Paint.Align.CENTER);
         canvas.drawText(text, textCx,
                 textCy - (textPaint.descent() + textPaint.ascent()) / 2f, textPaint);
+    }
+
+    /**
+     * Fill a prebuilt shape path and draw the value text centred on
+     * (textCx, textCy). Caller supplies reusable Paints.
+     */
+    static void drawShape(Canvas canvas, Path path, float textCx, float textCy,
+                          int fillColor, int alpha255, int textColor, float textSizePx,
+                          boolean shadow, float density, String text,
+                          Paint fill, Paint textPaint) {
+        fillShape(canvas, path, fillColor, alpha255, shadow, density, fill);
+        drawValueText(canvas, textCx, textCy, textColor, alpha255, textSizePx,
+                text, textPaint);
     }
 
     /**
